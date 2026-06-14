@@ -1,0 +1,757 @@
+<!-- ============================================================
+     PILOTE — simulateur de vol Tu-160 (ASCII) · L'arrière-salle
+     Vue de profil. Décolle (plein gaz + volets, tire à la
+     rotation), rentre le train, vole, largue tes bombes sur les
+     cibles au sol (anticipe : ça tombe en cloche), puis pose-toi
+     sur la piste (train sorti, volets, en douceur).
+     ZQSD/flèches : gaz + assiette · G : train · V/C : volets
+     ESPACE : larguer une bombe · F : plein écran
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pilote — Tu-160 · L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{ --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+         --neon:#2FD6C6; --oxblood:#E0392F; --sodium:#E9A23B; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono',monospace;
+    display:flex; flex-direction:column; align-items:center;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+    background-image:
+      radial-gradient(70vw 60vw at 50% -20%, rgba(47,214,198,.06), transparent 60%),
+      radial-gradient(50vw 50vw at 50% 120%, rgba(233,162,59,.05), transparent 60%);
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:999; pointer-events:none;
+    opacity:.22; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hud{ width:min(900px,97vw); display:flex; justify-content:space-between;
+    align-items:flex-end; padding:.5rem 0 .3rem; }
+  .hud .ttl{ font-family:'Press Start 2P',monospace; font-size:.75rem;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.25); }
+  .hud .sub{ font-size:.5rem; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--smoke); margin-top:.35rem; }
+  .hud .right{ text-align:right; font-family:'Press Start 2P',monospace; }
+  .hud .sc{ font-size:.72rem; color:var(--sodium); text-shadow:0 0 8px rgba(233,162,59,.6); }
+  .hud .bombs{ font-size:.5rem; color:var(--oxblood); margin-top:.4rem; letter-spacing:2px; }
+
+  .stage{ position:relative; width:min(900px,97vw); flex:1 1 auto;
+    display:flex; min-height:0; }
+  canvas{ display:block; width:100%; height:100%;
+    border-radius:10px; border:2px solid rgba(232,226,214,.12);
+    background:linear-gradient(180deg, #0d1420 0%, #101826 55%, #0a0f16 100%); }
+
+  /* bandeau d'instruments */
+  .instr{ width:min(900px,97vw); display:flex; gap:.35rem; padding:.45rem 0 .15rem;
+    flex-wrap:wrap; justify-content:center; }
+  .instr .g{ font-size:.56rem; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--smoke); border:1px solid rgba(232,226,214,.14);
+    border-radius:7px; padding:.3rem .55rem; min-width:74px; text-align:center; }
+  .instr .g b{ color:var(--bone); font-size:.72rem; display:block; margin-top:.15rem;
+    font-family:'Press Start 2P',monospace; }
+  .instr .g.on b{ color:var(--neon); }
+  .instr .g.warn b{ color:var(--oxblood); }
+  .instr .g.ok b{ color:var(--sodium); }
+
+  /* commandes tactiles */
+  .pad{ position:absolute; inset:0; display:none; z-index:20; pointer-events:none; }
+  body.touch .pad{ display:block; }
+  .pad .b{ position:absolute; pointer-events:auto; user-select:none;
+    font-family:'Press Start 2P',monospace; font-size:.5rem;
+    background:rgba(20,18,24,.6); color:rgba(232,226,214,.65);
+    border:1px solid rgba(232,226,214,.18); border-radius:9px;
+    display:grid; place-items:center; }
+  .pad .b:active{ background:rgba(47,214,198,.18); color:var(--neon); }
+  .pad .gaz{ left:3%; bottom:38%; width:58px; height:42px; }
+  .pad .ral{ left:3%; bottom:6%; width:58px; height:42px; }
+  .pad .up{ left:14%; bottom:6%; width:50px; height:46px; }
+  .pad .dn{ left:24%; bottom:6%; width:50px; height:46px; }
+  .pad .larg{ right:3%; bottom:6%; width:74px; height:60px;
+    background:rgba(224,57,47,.25); color:var(--oxblood); border-color:rgba(224,57,47,.5); }
+  .pad .trn{ right:3%; bottom:40%; width:64px; height:38px; }
+  .pad .vol{ right:14%; bottom:40%; width:64px; height:38px; }
+
+  .overlay{ position:absolute; inset:0; display:grid; place-items:center;
+    text-align:center; background:rgba(8,12,18,.9); border-radius:10px; padding:1.2rem; z-index:40; }
+  .overlay.hidden{ display:none; }
+  .overlay h2{ font-family:'Press Start 2P',monospace; font-size:1.05rem; line-height:1.5;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.3); margin-bottom:.8rem; }
+  .overlay h2.bad{ color:var(--oxblood); text-shadow:2px 2px 0 rgba(224,57,47,.3); }
+  .overlay h2.good{ color:var(--sodium); text-shadow:2px 2px 0 rgba(233,162,59,.4); }
+  .overlay p{ color:var(--smoke); font-size:.64rem; line-height:1.8; margin-bottom:1rem; max-width:46ch; }
+  .overlay p b{ color:var(--bone); }
+  .overlay .stats{ font-family:'Press Start 2P',monospace; font-size:.58rem; line-height:2; color:var(--bone); margin-bottom:1rem; }
+  .overlay .stats b{ color:var(--sodium); }
+  button.go{ font-family:'Press Start 2P',monospace; font-size:.64rem; cursor:pointer;
+    background:var(--neon); color:var(--ink); border:none; border-radius:6px; padding:.9rem 1.2rem; }
+  button.go:active{ transform:translateY(1px); }
+  .hint{ width:min(900px,97vw); text-align:center; color:var(--smoke);
+    font-size:.52rem; letter-spacing:.04em; padding:.3rem 0; }
+  @media (max-height:540px){ .instr{ display:none; } }
+</style>
+</head>
+<body>
+
+  <div class="hud">
+    <div>
+      <div class="ttl">PILOTE · TU-160</div>
+      <div class="sub" id="phase">prêt au décollage</div>
+    </div>
+    <div class="right">
+      <div class="sc"><span id="score">0</span></div>
+      <div class="bombs"><span id="bombs">●●●●●●●●</span></div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="pad">
+      <div class="b gaz" id="bGaz">GAZ+</div>
+      <div class="b ral" id="bRal">GAZ−</div>
+      <div class="b up" id="bUp">▲</div>
+      <div class="b dn" id="bDn">▼</div>
+      <div class="b trn" id="bTrn">TRAIN</div>
+      <div class="b vol" id="bVol">VOLETS</div>
+      <div class="b larg" id="bLarg">LARGUER</div>
+    </div>
+    <div class="overlay" id="ov">
+      <div>
+        <h2 id="ovT">SIMULATEUR<br>TU-160</h2>
+        <div id="ovBody">
+          <p><b>Décollage :</b> plein gaz, sors les volets, et tire sur le manche vers <b>180 kn</b> pour t'arracher du sol. Rentre le train pour aller plus vite. <b>Largue tes bombes</b> sur les cibles (anticipe, ça tombe en cloche !). Puis reviens te poser : <b>train sorti, volets, tout en douceur</b> sur la piste.</p>
+        </div>
+        <button class="go" id="play">Mise en route</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="instr" id="instr">
+    <div class="g">vitesse <b><span id="iV">0</span> kn</b></div>
+    <div class="g">altitude <b><span id="iAlt">0</span> m</b></div>
+    <div class="g">vario <b><span id="iVy">0</span></b></div>
+    <div class="g">gaz <b><span id="iThr">0</span>%</b></div>
+    <div class="g" id="gFlaps">volets <b><span id="iFlaps">0</span></b></div>
+    <div class="g" id="gGear">train <b><span id="iGear">bas</span></b></div>
+    <div class="g" id="gStall">état <b><span id="iState">OK</span></b></div>
+  </div>
+  <div class="hint" id="hint">ZQSD/flèches : gaz + assiette · G : train · V/C : volets · ESPACE : larguer · F : plein écran</div>
+
+<script>
+/* ============================================================
+   VOL CORE — simulateur de vol Tu-160 (vue de profil, ASCII)
+   Modèle de vol arcade mais crédible : poussée, traînée,
+   portance, décrochage. Roulage + décollage, volets (3 crans),
+   train rentrant, largage de bombes en balistique sur des
+   cibles au sol, atterrissage / crash.
+   Aucun DOM : toute la physique est testable en Node.
+   ============================================================ */
+function VolCore(opts){
+  opts = opts || {};
+
+  /* ---------- constantes calibrées ---------- */
+  const C = {
+    THRUST: 500,          // poussée plein gaz
+    Mv: 30,               // "inertie" longitudinale (plus petit = accélère plus vite)
+    CD0: 0.001594,        // traînée propre (-> Vmax ~560)
+    CD_GEAR: 0.0011,      // traînée du train sorti
+    CD_FLAP: 0.00077,     // traînée volets (par cran plein)
+    CD_IND: 0.0009,       // traînée induite (assiette)
+    VREF: 218,            // vitesse de référence portance
+    CL0: 0.348, CL_PITCH: 0.06, CL_FLAP: 1.355,  // coeffs (palier=1 en croisière)
+    PITCH_CRIT: 14,       // au-delà : décrochage (la portance chute)
+    PITCH_MIN: -16, PITCH_MAX: 19,
+    PITCH_RATE: 46,       // deg/s de rotation au manche (réactif)
+    PITCH_CENTER: 0.20,   // retour au neutre quand on lâche (doux : l'assiette "tient")
+    THR_RATE: 3.0,        // vitesse du gaz (plein gaz en ~0,33 s)
+    G_EFF: 10.5,          // "g" vertical (réponse verticale plus vive)
+    DAMP: 0.42,           // amortissement vertical
+    KNOT_MS: 0.5,         // 1 noeud -> m/s (monde + bombes)
+    G: 9.8,
+    VMAX: 600,
+    BRAKE: 0.9,           // freinage au sol (volets/aérofreins)
+    TOUCH_VY: -5.0,       // vy max au touché pour ne pas casser (m/s)
+    GEAR_TIME: 1.4,       // durée sortie/rentrée du train
+    BOMBES: 8
+  };
+
+  /* ---------- terrain : piste + cibles + piste d'arrivée ---------- */
+  const PISTE_FIN = 1400;            // longueur de la piste de départ (m)
+  const TERRAIN = {
+    pisteDepart:[0, PISTE_FIN],
+    pisteArrivee:[26000, 27600]
+  };
+  const ciblesDef = [
+    [8000,'caserne'], [10200,'pont'], [12600,'radar'],
+    [15200,'dépôt'], [18000,'usine'], [21000,'bunker']
+  ];
+
+  /* ---------- aléa (déterministe, pour d'éventuelles variations) ---------- */
+  function mulberry32(seed){
+    let a=seed>>>0;
+    return function(){ a|=0; a=(a+0x6D2B79F5)|0;
+      let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t;
+      return ((t^(t>>>14))>>>0)/4294967296; };
+  }
+  const rng=mulberry32(opts.seed||1);
+
+  /* ---------- état ---------- */
+  const S = {
+    phase:'sol',            // sol | air | pose | crash
+    v:0, alt:0, pitch:0, vy:0, throttle:0,
+    flaps:0,                // 0,1,2 (up / décollage / atterrissage)
+    gearDown:true, gearMov:0,
+    worldX:200,             // position sur la piste
+    score:0, bombsLeft:C.BOMBES,
+    stall:false, touchdownVy:0,
+    msg:'', over:false, events:[]
+  };
+  const bombs=[];           // {x, alt, vy, vx, live}
+  const cibles = ciblesDef.map(c=>({x:c[0], type:c[1], hit:false}));
+
+  /* ---------- helpers physiques ---------- */
+  function flapFrac(){ return S.flaps/2; }
+  function dragCoef(){
+    return C.CD0
+      + (S.gearDown||S.gearMov>0 ? C.CD_GEAR : 0)
+      + C.CD_FLAP*flapFrac();
+  }
+  function liftG(){
+    // coefficient avec décrochage au-delà de l'angle critique
+    let clp;
+    if (S.pitch <= C.PITCH_CRIT) clp = C.CL_PITCH*S.pitch;
+    else clp = C.CL_PITCH*C.PITCH_CRIT - C.CL_PITCH*1.8*(S.pitch-C.PITCH_CRIT); // chute
+    const cl = C.CL0 + clp + C.CL_FLAP*flapFrac();
+    const r = S.v/C.VREF;
+    return r*r*cl;
+  }
+  function vForward(){ return S.v*C.KNOT_MS; }     // m/s
+  function stallSpeedNow(){
+    const cl = C.CL0 + C.CL_PITCH*C.PITCH_CRIT + C.CL_FLAP*flapFrac();
+    return C.VREF*Math.sqrt(1/cl);
+  }
+
+  /* ---------- actions ---------- */
+  function throttle(d){ S.throttle = Math.max(0, Math.min(1, S.throttle + d)); }
+  function setThrottle(t){ S.throttle = Math.max(0, Math.min(1, t)); }
+  function flapsUp(){ if (S.flaps>0){ S.flaps--; S.events.push({type:'flaps', v:S.flaps}); } }
+  function flapsDown(){ if (S.flaps<2){ S.flaps++; S.events.push({type:'flaps', v:S.flaps}); } }
+  function toggleGear(){
+    if (S.gearMov>0) return;
+    if (S.phase==='sol' && S.gearDown) return;     // pas de rentrée au sol
+    S.gearMov = C.GEAR_TIME;
+    S._gearTarget = !S.gearDown;
+    S.events.push({type:'gear', down:S._gearTarget});
+  }
+  function dropBomb(){
+    if (S.bombsLeft<=0 || S.phase!=='air') return false;
+    S.bombsLeft--;
+    bombs.push({ x:S.worldX, alt:S.alt, vy:S.vy*0.0, vx:vForward(), live:true });
+    S.events.push({type:'bomb_away'});
+    return true;
+  }
+
+  /* ---------- un pas de simulation ---------- */
+  function step(dt, input){
+    input = input || {};
+    if (S.over){ stepBombs(dt); return; }
+
+    // commandes continues
+    if (input.gaz) throttle(C.THR_RATE*dt);
+    if (input.ralenti) throttle(-C.THR_RATE*dt);
+    // profondeur (assiette) — au sol on ne peut cabrer qu'à partir d'une certaine vitesse
+    let pitchCmd = 0;
+    if (input.cabrer) pitchCmd += 1;
+    if (input.piquer) pitchCmd -= 1;
+    const rotAuth = (S.phase==='sol') ? Math.max(0, Math.min(1,(S.v-70)/50)) : 1;
+    S.pitch += pitchCmd * C.PITCH_RATE * rotAuth * dt;
+    if (!pitchCmd && S.phase==='air'){
+      // retour TRÈS doux vers le neutre (l'assiette tient quand on lâche)
+      S.pitch += (-S.pitch)*Math.min(1,dt*C.PITCH_CENTER);
+    }
+    S.pitch = Math.max(C.PITCH_MIN, Math.min(C.PITCH_MAX, S.pitch));
+
+    // train en mouvement
+    if (S.gearMov>0){
+      S.gearMov -= dt;
+      if (S.gearMov<=0){ S.gearMov=0; S.gearDown=S._gearTarget;
+        S.events.push({type:'gear_done', down:S.gearDown}); }
+    }
+
+    // dynamique longitudinale
+    const drag = dragCoef()*S.v*S.v + C.CD_IND*S.pitch*S.pitch*(S.phase==='air'?1:0);
+    let vDot = (C.THRUST*S.throttle - drag)/C.Mv;
+    if (S.phase==='sol' || S.phase==='pose'){
+      // freinage au sol si gaz coupé
+      if (S.throttle<0.05) vDot -= C.BRAKE*Math.sign(S.v)*Math.max(0.4, S.v*0.01);
+    }
+    S.v += vDot*dt;
+    if (S.v<0) S.v=0;
+    if (S.v>C.VMAX) S.v=C.VMAX;
+
+    // portance / vertical
+    const lg = liftG();
+    S.stall = (S.phase==='air' && lg < 0.95 && S.v < stallSpeedNow());
+
+    if (S.phase==='sol'){
+      // décollage : il faut lg>1 (assez de vitesse + assiette)
+      if (lg > 1.0 && S.v > 90){
+        S.phase='air'; S.vy = (lg-1)*2.0;
+        S.events.push({type:'liftoff', v:S.v});
+      } else {
+        S.alt=0; S.vy=0;
+      }
+    } else if (S.phase==='air'){
+      const vyDot = (lg-1)*C.G_EFF - C.DAMP*S.vy;
+      S.vy += vyDot*dt;
+      S.alt += S.vy*dt;
+      if (S.alt<=0){
+        // contact avec le sol
+        S.alt=0;
+        S.touchdownVy = S.vy;
+        const surPiste = (S.worldX>=TERRAIN.pisteArrivee[0]-400 && S.worldX<=TERRAIN.pisteArrivee[1]) ||
+                         (S.worldX>=TERRAIN.pisteDepart[0] && S.worldX<=TERRAIN.pisteDepart[1]+400);
+        if (S.gearDown && S.vy > C.TOUCH_VY && Math.abs(S.pitch)<13 && surPiste){
+          S.phase='pose'; S.vy=0;
+          S.events.push({type:'touchdown', vy:S.touchdownVy});
+        } else {
+          S.phase='crash'; S.over=true;
+          S.events.push({type:'crash',
+            raison: !S.gearDown ? 'train rentré' :
+                    !surPiste ? 'hors piste' :
+                    S.touchdownVy<=C.TOUCH_VY ? 'posé trop brutalement' : 'mauvaise assiette'});
+          S.vy=0;
+        }
+      }
+    } else if (S.phase==='pose'){
+      S.alt=0; S.vy=0;
+      if (S.v < 2){
+        S.v=0; S.over=true;
+        S.events.push({type:'stopped'});
+      }
+    }
+
+    // avance dans le monde
+    S.worldX += vForward()*dt;
+
+    stepBombs(dt);
+  }
+
+  function stepBombs(dt){
+    for (const b of bombs){
+      if (!b.live) continue;
+      b.vy -= C.G*dt;             // vy négatif = descend (alt diminue)
+      b.alt += b.vy*dt;
+      b.x   += b.vx*dt;
+      if (b.alt<=0){
+        b.alt=0; b.live=false;
+        // impact : cible la plus proche
+        let best=null, bd=1e9;
+        for (const c of cibles){
+          if (c.hit) continue;
+          const d=Math.abs(c.x-b.x);
+          if (d<bd){ bd=d; best=c; }
+        }
+        if (best && bd<55){
+          best.hit=true;
+          const pts = 100;
+          S.score += pts;
+          S.events.push({type:'hit', x:best.x, cible:best.type, dist:bd|0});
+        } else {
+          S.events.push({type:'bomb_impact', x:b.x, near: best? (bd|0):null});
+        }
+      }
+    }
+    // purge des bombes mortes (gardées un peu pour l'effet, nettoyées par le shell)
+  }
+
+  return {
+    S, C, bombs, cibles, TERRAIN, PISTE_FIN,
+    step, throttle, setThrottle, flapsUp, flapsDown, toggleGear, dropBomb,
+    liftG, dragCoef, vForward,
+    // infos dérivées utiles
+    stallSpeed: ()=> stallSpeedNow()
+  };
+}
+if(typeof module!=='undefined') module.exports = VolCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  TAILLE_CAR: 13,    // taille des caractères (px)
+  VOLUME: 0.8
+};
+
+/* =================== MISE EN PLACE =================== */
+let sim = VolCore();
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const ov = document.getElementById('ov');
+const ovT = document.getElementById('ovT');
+const ovBody = document.getElementById('ovBody');
+const playBtn = document.getElementById('play');
+
+const isTouch = matchMedia('(pointer:coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+
+let started=false, CW=8, CH=15, dpr=1, cols=0, rows=0;
+let clouds=[], explosions=[], deadBombs=[];
+
+/* sprites de l'avion selon l'assiette — Tu-160 de profil, nez à droite :
+   dérive arrière (gauche), bosse de cockpit, fuselage à nez pointu, nacelles dessous */
+const SPRITES = {
+  up2:[ "   \\>         _.-=>",
+        "   |\\_____.-=#\"\"   ",
+        "  <======#\"\"       ",
+        "   \\_OO_/          " ],
+  up1:[ "   \\>       __.-=>",
+        "   |\\____.=#\"\"     ",
+        "  <=====#\"          ",
+        "   \\_OO_/          " ],
+  lvl:[ "   \\>              ",
+        "   |\\______.-^-.   ",
+        "  <==============-=>",
+        "   \\__OO__/        " ],
+  dn1:[ "   \\>              ",
+        "   |\\__.-^-.\\__    ",
+        "  <=====#\"\"\"   \"-=>",
+        "   \\_OO_/          " ],
+  dn2:[ "   \\>              ",
+        "   |\\_.^.\\___      ",
+        "  <===#\"\"    \"\"-._ ",
+        "   \\_OO_/      \"=>" ]
+};
+function spriteFor(pitch){
+  if (pitch>11) return SPRITES.up2;
+  if (pitch>3)  return SPRITES.up1;
+  if (pitch<-9) return SPRITES.dn2;
+  if (pitch<-3) return SPRITES.dn1;
+  return SPRITES.lvl;
+}
+
+function dim(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  const r = cv.getBoundingClientRect();
+  const cssW=Math.max(240,r.width), cssH=Math.max(180,r.height);
+  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  const base=REGLAGES.TAILLE_CAR;
+  CW=base*0.6; CH=base;
+  cols=Math.max(40, Math.floor(cssW/CW));
+  rows=Math.max(20, Math.floor(cssH/CH));
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.font=`${base}px ui-monospace,'SF Mono',monospace`;
+  ctx.textBaseline='top';
+  clouds=[];
+  for(let i=0;i<Math.round(cols/12);i++)
+    clouds.push({x:Math.random()*cols, y:2+Math.random()*(rows*0.3), w:3+Math.random()*4, sp:0.3+Math.random()*0.5});
+}
+addEventListener('resize', dim);
+
+/* écran -> grille de caractères */
+const PLANE_COL = ()=> Math.floor(cols*0.32);     // l'avion reste à ~1/3 gauche
+const GROUND_ROW = ()=> rows-3;                    // ligne de sol
+const ALT_SCALE = ()=> (rows-6) / 2600;            // m -> lignes (plafond visuel ~2600m affiché)
+const M_PER_COL = 26;                              // mètres par colonne (échelle horizontale)
+
+function worldToCol(worldX){
+  return PLANE_COL() + (worldX - sim.S.worldX)/M_PER_COL;
+}
+function altToRow(alt){
+  return GROUND_ROW() - alt*ALT_SCALE();
+}
+
+/* ---- dessin ---- */
+function draw(t){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const gr=GROUND_ROW();
+
+  // étoiles/ciel haut (quelques points fixes scintillants)
+  ctx.fillStyle='rgba(232,226,214,.25)';
+  for(let i=0;i<cols;i+=7){
+    const yy=(i*13)%Math.max(1,(gr-6));
+    if (Math.sin(t*1.5+i)>0.7){ ctx.globalAlpha=0.3; ctx.fillText('.', i*CW, yy*CH); }
+  }
+  ctx.globalAlpha=1;
+
+  // nuages (dérivent vers la gauche, vitesse relative + propre)
+  ctx.fillStyle='rgba(138,128,121,.5)';
+  for(const c of clouds){
+    c.x -= (c.sp + sim.vForward()/M_PER_COL*0.016*0.3);
+    if(c.x < -c.w) { c.x=cols+c.w; c.y=2+Math.random()*(gr*0.4); }
+    const cy=Math.round(c.y);
+    for(let k=-c.w;k<=c.w;k++){
+      const ch = Math.abs(k)>c.w-1?'.':Math.abs(k)<c.w*0.4?'@':'o';
+      drawCh(Math.round(c.x+k), cy, ch, k===0?'rgba(232,226,214,.5)':'rgba(138,128,121,.45)');
+    }
+  }
+
+  // sol + relief
+  for(let x=0;x<cols;x++){
+    drawCh(x, gr, '^'.repeat(1), 'rgba(42,90,68,.7)');
+    for(let y=gr+1;y<rows;y++)
+      drawCh(x, y, ((x+y)%5===0?'"':((x*3+y)%7===0?',':'.')), (x+y)%2?'#2a5a3a':'#244a30');
+  }
+
+  // pistes (départ et arrivée) si visibles
+  drawRunway(sim.TERRAIN.pisteDepart, gr, 'DÉPART');
+  drawRunway(sim.TERRAIN.pisteArrivee, gr, 'PISTE');
+
+  // cibles au sol
+  for(const cb of sim.cibles){
+    const col=Math.round(worldToCol(cb.x));
+    if(col<-3||col>cols+3) continue;
+    if(cb.hit){
+      drawStr(col-2, gr-1, 'xXx', 'rgba(138,128,121,.7)');
+      drawStr(col-2, gr,   '###', 'rgba(90,80,76,.8)');
+    } else {
+      // petite structure selon le type
+      drawStr(col-1, gr-2, '_n_', 'var');
+      drawStr(col-1, gr-1, '|'+(cb.type[0].toUpperCase())+'|', '#E9A23B');
+      drawStr(col-1, gr,   '[_]', '#8A8079');
+    }
+  }
+
+  // bombes en chute
+  for(const b of sim.bombs){
+    if(!b.live) continue;
+    const col=Math.round(worldToCol(b.x));
+    const row=Math.round(altToRow(b.alt));
+    drawCh(col,row,'•','#E0392F');
+    drawCh(col, row-1, "'", 'rgba(224,57,47,.5)');
+  }
+
+  // explosions
+  for(let i=explosions.length-1;i>=0;i--){
+    const e=explosions[i]; e.age+=1/60;
+    if(e.age>e.vie){ explosions.splice(i,1); continue; }
+    const col=Math.round(worldToCol(e.x)), gr2=GROUND_ROW();
+    const k=e.age/e.vie, rad=Math.round(1+k*4);
+    const chars = k<0.4?'@#%':k<0.7?'*+=':'.,\'';
+    for(let dx=-rad;dx<=rad;dx++){
+      const h=Math.round(Math.sqrt(Math.max(0,rad*rad-dx*dx))*0.6);
+      for(let dy=0;dy<=h;dy++){
+        const ch=chars[(Math.abs(dx)+dy)%3];
+        drawCh(col+dx, gr2-dy, ch, k<0.5?'#E9A23B':'#E0392F');
+      }
+    }
+  }
+
+  // l'avion
+  const sprite = started ? spriteFor(sim.S.pitch) : SPRITES.lvl;
+  const pc=PLANE_COL();
+  const prow = Math.round(altToRow(sim.S.alt)) - 2;   // sprite 4 lignes : ancre au centre
+  for(let r=0;r<sprite.length;r++)
+    drawStr(pc-5, prow+r, sprite[r], '#E8E2D6');
+  // train d'atterrissage (sous l'avion, ligne des nacelles) si sorti
+  if(sim.S.gearDown || sim.S.gearMov>0){
+    const wob = sim.S.gearMov>0 ? (Math.random()<0.5?0:1):0;
+    drawStr(pc-3, prow+4+wob, 'i i', '#2FD6C6');
+  }
+  // volets (marque sur l'aile) si sortis
+  if(sim.S.flaps>0){
+    drawCh(pc+2, prow+3, sim.S.flaps>=2?'v':'.', '#E9A23B');
+  }
+  // traînée des réacteurs à forte poussée (derrière, à gauche)
+  if(sim.S.throttle>0.6 && started){
+    const fl = Math.random()<0.6?'=':'~';
+    drawCh(pc-6, prow+2, fl, 'rgba(233,162,59,.7)');
+    if(sim.S.throttle>0.9) drawCh(pc-7, prow+2, '~', 'rgba(224,57,47,.6)');
+  }
+
+  // alerte décrochage
+  if(sim.S.stall){
+    ctx.fillStyle = Math.sin(t*12)>0?'#E0392F':'rgba(224,57,47,.3)';
+    ctx.font=`${REGLAGES.TAILLE_CAR}px ui-monospace,monospace`;
+    drawStr(Math.floor(cols/2)-5, 2, 'DÉCROCHAGE !', '#E0392F');
+  }
+}
+function drawCh(x,y,ch,col){
+  if(x<0||y<0||x>=cols||y>=rows||ch===' '||ch==='') return;
+  ctx.fillStyle = col || '#E8E2D6';
+  ctx.fillText(ch, x*CW, y*CH);
+}
+function drawStr(x,y,s,col){
+  for(let i=0;i<s.length;i++){
+    const ch=s[i];
+    if(ch===' ') continue;
+    drawCh(x+i,y,ch, col==='var'?'#8A8079':col);
+  }
+}
+function drawRunway(seg, gr, label){
+  const c0=Math.round(worldToCol(seg[0])), c1=Math.round(worldToCol(seg[1]));
+  if(c1<-2||c0>cols+2) return;
+  for(let x=Math.max(0,c0);x<=Math.min(cols-1,c1);x++){
+    drawCh(x, gr, '=', '#8A8079');
+    if((x%4)===0) drawCh(x, gr, '=', '#E8E2D6');
+  }
+  const mid=Math.round((c0+c1)/2);
+  if(mid>2 && mid<cols-2) drawStr(mid-3, gr+1, label, 'rgba(138,128,121,.7)');
+}
+
+/* ---- HUD ---- */
+function hud(){
+  document.getElementById('score').textContent=sim.S.score;
+  document.getElementById('bombs').textContent='●'.repeat(sim.S.bombsLeft)||'—';
+  document.getElementById('iV').textContent=Math.round(sim.S.v);
+  document.getElementById('iAlt').textContent=Math.round(sim.S.alt);
+  const vy=sim.S.vy;
+  document.getElementById('iVy').textContent=(vy>=0?'+':'')+vy.toFixed(1);
+  document.getElementById('iThr').textContent=Math.round(sim.S.throttle*100);
+  document.getElementById('iFlaps').textContent=['rentrés','décollage','atterro'][sim.S.flaps];
+  document.getElementById('iGear').textContent=sim.S.gearMov>0?'…':(sim.S.gearDown?'SORTI':'rentré');
+  document.getElementById('gGear').className='g '+(sim.S.gearDown?'on':'');
+  document.getElementById('gFlaps').className='g '+(sim.S.flaps>0?'ok':'');
+  const st=document.getElementById('gStall');
+  if(sim.S.stall){ document.getElementById('iState').textContent='DÉCROCHE'; st.className='g warn'; }
+  else if(sim.S.v>0 && sim.S.v<sim.stallSpeed()+15 && sim.S.phase==='air'){ document.getElementById('iState').textContent='LENT'; st.className='g warn'; }
+  else { document.getElementById('iState').textContent='OK'; st.className='g'; }
+  const ph={sol:'roulage au sol',air:'en vol',pose:'au sol',crash:'crash'}[sim.S.phase];
+  document.getElementById('phase').textContent=ph;
+}
+
+/* ---- sons ---- */
+let AC=null,master=null,engOsc=null,engGain=null,noiseBuf=null;
+function audioInit(){
+  if(AC){ if(AC.state==='suspended')AC.resume(); return; }
+  try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    master=AC.createGain(); master.gain.value=REGLAGES.VOLUME*0.5; master.connect(AC.destination);
+    engOsc=AC.createOscillator(); engOsc.type='sawtooth';
+    const ef=AC.createBiquadFilter(); ef.type='lowpass'; ef.frequency.value=420;
+    engGain=AC.createGain(); engGain.gain.value=0;
+    engOsc.connect(ef); ef.connect(engGain); engGain.connect(master); engOsc.start();
+    noiseBuf=AC.createBuffer(1,AC.sampleRate,AC.sampleRate);
+    const d=noiseBuf.getChannelData(0); for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  }catch(e){AC=null;}
+}
+function snd(f,d,type,g,slide){
+  if(!AC)return;
+  const t=AC.currentTime,o=AC.createOscillator(),v=AC.createGain();
+  o.type=type;o.frequency.setValueAtTime(f,t);
+  if(slide)o.frequency.exponentialRampToValueAtTime(slide,t+d);
+  v.gain.setValueAtTime(g,t);v.gain.exponentialRampToValueAtTime(0.0001,t+d);
+  o.connect(v);v.connect(master);o.start(t);o.stop(t+d+0.02);
+}
+function boom(){
+  if(!AC)return;
+  const t=AC.currentTime,s=AC.createBufferSource();s.buffer=noiseBuf;
+  const f=AC.createBiquadFilter();f.type='lowpass';
+  f.frequency.setValueAtTime(900,t);f.frequency.exponentialRampToValueAtTime(80,t+0.4);
+  const v=AC.createGain();v.gain.setValueAtTime(0.3,t);v.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
+  s.connect(f);f.connect(v);v.connect(master);s.start(t);s.stop(t+0.5);
+}
+function majSonMoteur(){
+  if(!AC||!engGain)return;
+  const v=sim.S.throttle;
+  engOsc.frequency.setTargetAtTime(45+v*70 + sim.S.v*0.15, AC.currentTime, 0.1);
+  engGain.gain.setTargetAtTime(started&&!sim.S.over?0.04+v*0.05:0, AC.currentTime, 0.15);
+}
+
+/* ---- événements ---- */
+function consume(){
+  for(const e of sim.S.events.splice(0)){
+    if(e.type==='liftoff') snd(440,.4,'sine',.07,700);
+    else if(e.type==='flaps') snd(300+sim.S.flaps*80,.12,'square',.05);
+    else if(e.type==='gear') snd(200,.3,'sawtooth',.05,140);
+    else if(e.type==='gear_done') snd(520,.08,'square',.06);
+    else if(e.type==='bomb_away') snd(600,.2,'sine',.05,180);
+    else if(e.type==='hit'){ boom(); explosions.push({x:e.x,age:0,vie:0.9}); flashScore(); }
+    else if(e.type==='bomb_impact'){ boom(); explosions.push({x:e.x,age:0,vie:0.7}); }
+    else if(e.type==='touchdown'){ snd(180,.25,'sine',.08,90); }
+    else if(e.type==='crash'){ boom(); setTimeout(()=>fin(false,e.raison),500); }
+    else if(e.type==='stopped'){ setTimeout(()=>fin(true,null),300); }
+  }
+}
+function flashScore(){ const el=document.getElementById('score'); el.style.transition='none'; el.style.color='#fff'; setTimeout(()=>{el.style.transition='color .5s';el.style.color='';},30); }
+function fin(bien, raison){
+  started=false;
+  const tousTouches = sim.cibles.every(c=>c.hit);
+  if(bien){
+    ovT.textContent='POSÉ EN DOUCEUR !'; ovT.className='good';
+    ovBody.innerHTML='<div class="stats">SCORE <b>'+sim.S.score+'</b><br>'+
+      'cibles détruites <b>'+sim.cibles.filter(c=>c.hit).length+'/'+sim.cibles.length+'</b>'+
+      (tousTouches?'<br><b>SANS-FAUTE !</b>':'')+'<br>posé sain et sauf</div>';
+  } else {
+    ovT.textContent='CRASH'; ovT.className='bad';
+    ovBody.innerHTML='<p>'+(raison?('Cause : <b>'+raison+'</b>.'):'')+'</p>'+
+      '<div class="stats">cibles détruites <b>'+sim.cibles.filter(c=>c.hit).length+'/'+sim.cibles.length+'</b> · score <b>'+sim.S.score+'</b></div>';
+  }
+  playBtn.textContent='Recommencer';
+  ov.classList.remove('hidden');
+}
+
+/* ---- entrées ---- */
+const input={gaz:false,ralenti:false,cabrer:false,piquer:false};
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['z','w','arrowup'].includes(k)){ input.gaz=true; e.preventDefault(); }
+  if(['s','arrowdown'].includes(k)){ input.ralenti=true; e.preventDefault(); }
+  if(['a','q','arrowleft'].includes(k)){ input.cabrer=true; e.preventDefault(); }
+  if(['d','arrowright'].includes(k)){ input.piquer=true; e.preventDefault(); }
+  if(k==='g' && started){ sim.toggleGear(); }
+  if(k==='v' && started){ sim.flapsDown(); }
+  if(k==='c' && started){ sim.flapsUp(); }
+  if(k===' ' && started){ sim.dropBomb(); e.preventDefault(); }
+  if(k==='f'){ if(document.fullscreenElement)document.exitFullscreen(); else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); }
+});
+addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(['z','w','arrowup'].includes(k)) input.gaz=false;
+  if(['s','arrowdown'].includes(k)) input.ralenti=false;
+  if(['a','q','arrowleft'].includes(k)) input.cabrer=false;
+  if(['d','arrowright'].includes(k)) input.piquer=false;
+});
+function hold(id,on){
+  const el=document.getElementById(id); if(!el)return;
+  const set=v=>{ if(on==='larg'){ if(v&&started)sim.dropBomb(); } else input[on]=v; };
+  el.addEventListener('touchstart',e=>{ audioInit(); set(true); e.preventDefault(); },{passive:false});
+  el.addEventListener('touchend',e=>{ set(false); e.preventDefault(); },{passive:false});
+}
+hold('bGaz','gaz'); hold('bRal','ralenti'); hold('bUp','cabrer'); hold('bDn','piquer'); hold('bLarg','larg');
+document.getElementById('bTrn').addEventListener('touchstart',e=>{ if(started)sim.toggleGear(); e.preventDefault(); },{passive:false});
+document.getElementById('bVol').addEventListener('touchstart',e=>{ if(started)sim.flapsDown(); e.preventDefault(); },{passive:false});
+
+/* ---- boucle ---- */
+let last=performance.now(), acc=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt=(now-last)/1000; last=now; if(dt>0.1)dt=0.1;
+  acc+=dt; let n=0;
+  while(acc>=1/60 && n<4){
+    if(started && !sim.S.over) sim.step(1/60, input);
+    acc-=1/60; n++;
+  }
+  if(n===4) acc=0;
+  consume(); majSonMoteur();
+  draw(now/1000); hud();
+}
+
+playBtn.addEventListener('click', ()=>{
+  audioInit();
+  sim = VolCore();                 // partie neuve
+  explosions=[]; deadBombs=[];
+  ovT.className='';
+  started=true;
+  ov.classList.add('hidden');
+});
+
+dim();
+draw(0); hud();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -1,0 +1,461 @@
+<!-- ============================================================
+     BLACKJACK — L'arrière-salle  ·  2 joueurs, même tél (hot-seat)
+     Un seul fichier. Vraies règles, jetons, mises.
+     À changer en premier :  <<< CHANGE ICI
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blackjack — L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@400;600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+    --neon:#2FD6C6; --oxblood:#B5302A; --sodium:#E9A23B;
+    --felt:#13110F;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono', ui-monospace, monospace;
+    min-height:100vh;
+    background-image:
+      radial-gradient(70vw 60vw at 80% -10%, rgba(233,162,59,.10), transparent 60%),
+      radial-gradient(60vw 60vw at -10% 110%, rgba(181,48,42,.10), transparent 60%);
+    -webkit-tap-highlight-color:transparent;
+  }
+  body::after{ /* grain */
+    content:""; position:fixed; inset:0; z-index:9999; pointer-events:none;
+    opacity:.4; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  ::selection{ background:var(--neon); color:var(--ink); }
+
+  .wrap{ width:min(560px, 94vw); margin:0 auto; padding:1.1rem 0 7rem; }
+
+  /* ---- en-tête ---- */
+  .top{ display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:1rem; }
+  .top h1{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:800;
+    font-size:1.8rem; letter-spacing:.02em; text-transform:uppercase; line-height:.9;
+    color:var(--neon); text-shadow:0 0 10px rgba(47,214,198,.4);
+  }
+  .top .sub{ font-size:.62rem; letter-spacing:.22em; text-transform:uppercase; color:var(--smoke); }
+  .round{ font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--sodium); text-align:right; }
+
+  /* ---- table ---- */
+  .zone{
+    background:linear-gradient(180deg, rgba(255,255,255,.015), transparent), var(--felt);
+    border:1px solid rgba(232,226,214,.10); border-radius:14px;
+    padding:1rem; margin-bottom:.8rem;
+  }
+  .zone.player.active{
+    border-color:var(--neon);
+    box-shadow:0 0 0 1px var(--neon), 0 0 28px rgba(47,214,198,.18);
+  }
+  .zone .label{
+    display:flex; justify-content:space-between; align-items:center;
+    font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--smoke);
+    margin-bottom:.7rem;
+  }
+  .zone .label .who{ color:var(--bone); }
+  .zone.player.active .label .who{ color:var(--neon); }
+  .chips{ color:var(--sodium); }
+  .bet-tag{ color:var(--bone); }
+  .total{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:600; font-size:1.5rem;
+    line-height:1; min-width:1.6em; text-align:right;
+  }
+  .total.bust{ color:var(--oxblood); }
+  .total.win{ color:var(--neon); }
+
+  /* ---- cartes ---- */
+  .hand{ display:flex; gap:.4rem; flex-wrap:wrap; min-height:84px; align-items:center; }
+  .card{
+    width:56px; height:80px; border-radius:7px; flex:0 0 auto;
+    background:var(--bone); color:var(--ink);
+    position:relative; box-shadow:0 4px 10px rgba(0,0,0,.5);
+    font-weight:700;
+    animation:deal .25s ease both;
+  }
+  @keyframes deal{ from{ transform:translateY(-12px) rotate(-4deg); opacity:0 } }
+  .card .r{ position:absolute; top:5px; left:6px; font-size:.8rem; line-height:1; }
+  .card .s{ position:absolute; bottom:5px; right:6px; font-size:.8rem; line-height:1; }
+  .card .big{ position:absolute; inset:0; display:grid; place-items:center; font-size:1.7rem; }
+  .card.red{ color:var(--oxblood); }
+  .card.back{
+    background:
+      repeating-linear-gradient(45deg, rgba(47,214,198,.18) 0 6px, transparent 6px 12px),
+      var(--ink);
+    border:1px solid rgba(47,214,198,.5);
+  }
+
+  /* ---- barre d'action (bas) ---- */
+  .bar{
+    position:fixed; left:0; right:0; bottom:0; z-index:50;
+    background:linear-gradient(180deg, transparent, var(--ink) 28%);
+    padding:1rem; display:flex; justify-content:center;
+  }
+  .bar-inner{ width:min(560px,94vw); }
+  .prompt{ text-align:center; font-size:.8rem; color:var(--bone); margin-bottom:.7rem; min-height:1.2em; }
+  .prompt b{ color:var(--neon); }
+  .btns{ display:flex; gap:.5rem; flex-wrap:wrap; justify-content:center; }
+  button{
+    font-family:'Space Mono',monospace; font-weight:700; font-size:.82rem;
+    letter-spacing:.06em; text-transform:uppercase; cursor:pointer;
+    background:transparent; color:var(--bone);
+    border:1px solid rgba(232,226,214,.3); border-radius:10px;
+    padding:.85rem 1.1rem; flex:1 1 auto; min-width:92px;
+    transition:all .18s ease;
+  }
+  button:hover, button:focus-visible{ border-color:var(--neon); color:var(--neon); outline:none; }
+  button.go{ background:var(--neon); color:var(--ink); border-color:var(--neon); }
+  button.go:hover{ box-shadow:0 0 20px rgba(47,214,198,.4); }
+  button.red{ border-color:var(--oxblood); color:var(--oxblood); }
+  button.red:hover{ background:var(--oxblood); color:var(--bone); }
+  button:disabled{ opacity:.3; cursor:not-allowed; }
+  button:disabled:hover{ border-color:rgba(232,226,214,.3); color:var(--bone); }
+
+  .pending{
+    text-align:center; font-family:'Big Shoulders Display',sans-serif;
+    font-size:1.6rem; color:var(--sodium); margin-bottom:.5rem;
+  }
+
+  /* ---- bandeau résultat / overlay passage ---- */
+  .banner{
+    text-align:center; padding:.9rem; margin-bottom:.8rem; border-radius:12px;
+    border:1px solid rgba(232,226,214,.12); font-size:.85rem;
+  }
+  .banner b{ font-weight:700; }
+  .win-c{ color:var(--neon); } .lose-c{ color:var(--oxblood); } .push-c{ color:var(--sodium); }
+
+  .overlay{
+    position:fixed; inset:0; z-index:200; display:grid; place-items:center;
+    background:rgba(14,10,11,.94); text-align:center; padding:2rem;
+  }
+  .overlay h2{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:800;
+    font-size:2.4rem; text-transform:uppercase; color:var(--neon);
+    text-shadow:0 0 16px rgba(47,214,198,.4); margin-bottom:.6rem; line-height:.95;
+  }
+  .overlay p{ color:var(--smoke); margin-bottom:1.6rem; max-width:30ch; }
+  .overlay .big-red{ color:var(--oxblood);
+    text-shadow:0 0 16px rgba(181,48,42,.4); }
+
+  @media (prefers-reduced-motion: reduce){ *{ animation:none!important; transition:none!important; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<div class="bar"><div class="bar-inner" id="bar"></div></div>
+<div id="overlay"></div>
+
+<script>
+/* =======================================================================
+   RÉGLAGES — change ces valeurs si tu veux       <<< CHANGE ICI
+   ======================================================================= */
+const NOMS       = ["Joueur 1", "Joueur 2"]; // les deux joueurs
+const DEPART     = 500;   // jetons au départ
+const MISE_MIN   = 10;    // mise minimum
+const JETONS     = [10, 25, 50, 100]; // boutons de mise
+
+/* =======================================================================
+   LE JEU — pas besoin de toucher en dessous pour jouer
+   ======================================================================= */
+const SUITS = [
+  {s:"♠", red:false}, {s:"♥", red:true},
+  {s:"♦", red:true},  {s:"♣", red:false}
+];
+const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+
+let state;
+
+function freshDeck(){
+  const d = [];
+  for(const su of SUITS) for(const r of RANKS) d.push({rank:r, suit:su.s, red:su.red});
+  for(let i=d.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [d[i],d[j]]=[d[j],d[i]]; }
+  return d;
+}
+function draw(){ if(state.deck.length < 15) state.deck = freshDeck(); return state.deck.pop(); }
+
+function value(cards){
+  let total=0, aces=0;
+  for(const c of cards){
+    if(c.rank==="A"){ aces++; total+=11; }
+    else if(["K","Q","J"].includes(c.rank)) total+=10;
+    else total+=Number(c.rank);
+  }
+  while(total>21 && aces>0){ total-=10; aces--; }
+  return total;
+}
+const isBJ = cards => cards.length===2 && value(cards)===21;
+
+function newGame(){
+  state = {
+    deck: freshDeck(),
+    players: NOMS.map(n => ({ name:n, chips:DEPART, bet:0, cards:[], done:false, doubled:false, result:null, profit:0 })),
+    dealer: { cards:[], revealed:false },
+    phase: "bet",     // bet -> play -> dealer -> result -> (gameover)
+    turn: 0,          // joueur en cours (mise ou jeu)
+    pending: 0,       // mise en cours de construction
+    round: 1
+  };
+  render();
+}
+
+/* ---- mises ---- */
+function addChip(v){
+  const p = state.players[state.turn];
+  if(state.pending + v <= p.chips) state.pending += v;
+  render();
+}
+function clearBet(){ state.pending = 0; render(); }
+function confirmBet(){
+  const p = state.players[state.turn];
+  if(state.pending < MISE_MIN) return;
+  p.bet = state.pending; p.chips -= p.bet; state.pending = 0;
+  if(state.turn === 0){ state.turn = 1; render(); }
+  else { deal(); }
+}
+
+/* ---- distribution ---- */
+function deal(){
+  for(const p of state.players){ p.cards=[draw(),draw()]; p.done=false; p.doubled=false; p.result=null; p.profit=0; }
+  state.dealer.cards = [draw(), draw()];
+  state.dealer.revealed = false;
+  state.players.forEach(p => { if(isBJ(p.cards)) p.done = true; }); // blackjack = reste auto
+  state.phase = "play";
+  state.turn = 0;
+  if(state.players[0].done) advance();   // si J1 a un blackjack direct
+  else render();
+}
+
+/* ---- actions joueur ---- */
+function hit(){
+  const p = state.players[state.turn];
+  p.cards.push(draw());
+  const v = value(p.cards);
+  if(v >= 21) p.done = true;   // bust ou 21 = on s'arrête
+  if(p.done) advance(); else render();
+}
+function stand(){ state.players[state.turn].done = true; advance(); }
+function double(){
+  const p = state.players[state.turn];
+  if(p.chips < p.bet || p.cards.length !== 2) return;
+  p.chips -= p.bet; p.bet *= 2; p.doubled = true;
+  p.cards.push(draw()); p.done = true;
+  advance();
+}
+
+function advance(){
+  // passe au joueur suivant pas encore fini, sinon au croupier
+  if(state.turn === 0 && !state.players[1].done){
+    state.turn = 1;
+    showPass(state.players[1].name, () => { state.phase="play"; render(); });
+    return;
+  }
+  dealerPlay();
+}
+
+/* ---- croupier ---- */
+function dealerPlay(){
+  state.phase = "dealer";
+  state.dealer.revealed = true;
+  // le croupier tire seulement si au moins un joueur n'a pas sauté
+  const someoneAlive = state.players.some(p => value(p.cards) <= 21);
+  if(someoneAlive){ while(value(state.dealer.cards) < 17) state.dealer.cards.push(draw()); }
+  resolve();
+}
+
+/* ---- résultats + paiement ---- */
+function resolve(){
+  const dT = value(state.dealer.cards), dBJ = isBJ(state.dealer.cards);
+  for(const p of state.players){
+    const pT = value(p.cards), pBJ = isBJ(p.cards);
+    let res, profit;
+    if(pT > 21){ res="lose"; profit=-p.bet; }
+    else if(pBJ && !dBJ){ res="bj"; profit=Math.round(p.bet*1.5); }
+    else if(pBJ && dBJ){ res="push"; profit=0; }
+    else if(dBJ){ res="lose"; profit=-p.bet; }
+    else if(dT > 21){ res="win"; profit=p.bet; }
+    else if(pT > dT){ res="win"; profit=p.bet; }
+    else if(pT < dT){ res="lose"; profit=-p.bet; }
+    else { res="push"; profit=0; }
+    p.result = res; p.profit = profit;
+    // on rend la mise + le gain (la mise a été retirée au moment de miser)
+    if(res==="win")  p.chips += p.bet*2;
+    if(res==="bj")   p.chips += p.bet + Math.round(p.bet*1.5);
+    if(res==="push") p.chips += p.bet;
+  }
+  state.phase = "result";
+  render();
+}
+
+function nextRound(){
+  const broke = state.players.find(p => p.chips < MISE_MIN);
+  if(broke){ gameOver(broke); return; }
+  state.round++; state.turn = 0; state.pending = 0;
+  state.players.forEach(p => { p.bet=0; p.cards=[]; p.result=null; });
+  state.dealer = { cards:[], revealed:false };
+  state.phase = "bet";
+  render();
+}
+
+function gameOver(loser){
+  const ov = document.getElementById("overlay");
+  ov.innerHTML = `
+    <div class="overlay">
+      <div>
+        <h2 class="big-red">À sec.</h2>
+        <p><b>${loser.name}</b> a tout claqué. C'est lui qui régale la prochaine tournée. Pour de vrai.</p>
+        <button class="go" onclick="document.getElementById('overlay').innerHTML='';newGame()">Remettre ça</button>
+      </div>
+    </div>`;
+}
+
+/* ---- transition « passe le tél » ---- */
+function showPass(name, then){
+  const ov = document.getElementById("overlay");
+  ov.innerHTML = `
+    <div class="overlay">
+      <div>
+        <h2>À toi,<br>${name}</h2>
+        <p>Passe le téléphone. Touche quand t'es prêt.</p>
+        <button class="go" id="passBtn">Je suis prêt</button>
+      </div>
+    </div>`;
+  document.getElementById("passBtn").onclick = () => { ov.innerHTML=""; then(); };
+}
+
+/* =======================================================================
+   AFFICHAGE
+   ======================================================================= */
+function cardHTML(c){
+  return `<div class="card ${c.red?'red':''}">
+    <span class="r">${c.rank}</span><span class="big">${c.suit}</span><span class="s">${c.suit}</span>
+  </div>`;
+}
+function backHTML(){ return `<div class="card back"></div>`; }
+
+function dealerHTML(){
+  const d = state.dealer;
+  let cards, tot="";
+  if(d.cards.length === 0){
+    cards = '<span style="color:var(--smoke);font-size:.8rem">en attente des mises…</span>';
+  } else if(d.revealed){
+    cards = d.cards.map(cardHTML).join("");
+    const v = value(d.cards), cls = v>21 ? "bust" : "";
+    tot = `<span class="total ${cls}">${v}</span>`;
+  } else {
+    cards = cardHTML(d.cards[0]) + backHTML();
+    tot = `<span class="total">?</span>`;
+  }
+  return `<div class="zone">
+    <div class="label"><span class="who">Le croupier</span>${tot}</div>
+    <div class="hand">${cards}</div>
+  </div>`;
+}
+
+function playerHTML(i){
+  const p = state.players[i];
+  const isActive = (state.phase==="bet" || state.phase==="play") && state.turn===i && !p.done;
+  const v = p.cards.length ? value(p.cards) : 0;
+  let cls = ""; if(v>21) cls="bust"; if(p.result==="win"||p.result==="bj") cls="win";
+  const totHTML = p.cards.length ? `<span class="total ${cls}">${v}</span>` : "";
+  const betTag = p.bet ? `<span class="bet-tag">mise ${p.bet}</span> · ` : "";
+
+  let banner = "";
+  if(state.phase==="result" && p.result){
+    const map = {
+      win:["win-c","Gagne", "+"+p.profit],
+      bj:["win-c","Blackjack !", "+"+p.profit],
+      push:["push-c","Égalité", "±0"],
+      lose:["lose-c","Perd", p.profit]
+    };
+    const [c,txt,amt] = map[p.result];
+    banner = `<div class="banner"><b class="${c}">${txt}</b> &nbsp; <span class="${c}">${amt} jetons</span></div>`;
+  }
+
+  return `<div class="zone player ${isActive?'active':''}">
+    <div class="label">
+      <span><span class="who">${p.name}</span> &nbsp; ${betTag}<span class="chips">${p.chips} jetons</span></span>
+      ${totHTML}
+    </div>
+    <div class="hand">${p.cards.map(cardHTML).join("") || '<span style="color:var(--smoke);font-size:.8rem">en attente…</span>'}</div>
+    ${banner}
+  </div>`;
+}
+
+function render(){
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="top">
+      <div>
+        <h1>Blackjack</h1>
+        <div class="sub">L'arrière-salle · hot-seat</div>
+      </div>
+      <div class="round">Main n°${state.round}</div>
+    </div>
+    ${dealerHTML()}
+    ${playerHTML(0)}
+    ${playerHTML(1)}
+  `;
+  renderBar();
+}
+
+function renderBar(){
+  const bar = document.getElementById("bar");
+  const ph = state.phase;
+
+  if(ph === "bet"){
+    const p = state.players[state.turn];
+    const chipBtns = JETONS.map(v =>
+      `<button onclick="addChip(${v})" ${state.pending+v>p.chips?'disabled':''}>+${v}</button>`
+    ).join("");
+    bar.innerHTML = `
+      <div class="prompt">À toi de miser, <b>${p.name}</b> — ${p.chips} jetons dispo</div>
+      <div class="pending">${state.pending} jetons misés</div>
+      <div class="btns">${chipBtns}</div>
+      <div class="btns" style="margin-top:.5rem">
+        <button onclick="clearBet()">Effacer</button>
+        <button class="go" onclick="confirmBet()" ${state.pending<MISE_MIN?'disabled':''}>Miser</button>
+      </div>`;
+    return;
+  }
+
+  if(ph === "play"){
+    const p = state.players[state.turn];
+    const canDouble = p.cards.length===2 && p.chips>=p.bet;
+    bar.innerHTML = `
+      <div class="prompt">Au tour de <b>${p.name}</b> — tirer, rester, ou doubler ?</div>
+      <div class="btns">
+        <button class="go" onclick="hit()">Tirer</button>
+        <button onclick="stand()">Rester</button>
+        <button class="red" onclick="double()" ${canDouble?'':'disabled'}>Doubler</button>
+      </div>`;
+    return;
+  }
+
+  if(ph === "result"){
+    bar.innerHTML = `
+      <div class="prompt">Manche finie. On remet ça ?</div>
+      <div class="btns"><button class="go" onclick="nextRound()">Nouvelle main</button></div>`;
+    return;
+  }
+
+  bar.innerHTML = ""; // pendant l'animation croupier
+}
+
+/* go */
+newGame();
+</script>
+</body>
+</html>

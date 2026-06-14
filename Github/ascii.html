@@ -1,0 +1,499 @@
+<!-- ============================================================
+     DÉLIRE ASCII — un donut 3D en ASCII qui se balade tout seul
+     devant un ciel spatial demoscene · L'arrière-salle
+     Deux couches indépendantes :
+       FOND   : nébuleuse, étoiles en parallaxe, planète à anneaux,
+                lune, étoiles filantes (pixels calculés en direct)
+       DEVANT : le donut (héritier du légendaire donut.c), rampe
+                ".,-~:;=!*#$@", + un OVNI ASCII qui passe parfois
+     Double-clic : plein écran · F : fps · M : son
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Délire ASCII — L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{ --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+         --neon:#2FD6C6; --oxblood:#E0392F; --sodium:#E9A23B; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono',monospace; overflow:hidden;
+    display:flex; flex-direction:column; align-items:center;
+    -webkit-tap-highlight-color:transparent;
+    background-image:
+      radial-gradient(60vw 50vw at 85% -8%, rgba(233,162,59,.08), transparent 60%),
+      radial-gradient(50vw 50vw at -10% 110%, rgba(181,48,42,.08), transparent 60%);
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:999; pointer-events:none;
+    opacity:.26; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .hud{ width:min(720px,96vw); display:flex; justify-content:space-between;
+    align-items:flex-end; padding:.7rem 0 .45rem; }
+  .hud .ttl{ font-family:'Press Start 2P',monospace; font-size:.8rem;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.25); }
+  .hud .sub{ font-size:.52rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--smoke); margin-top:.4rem; }
+  .hud .fps{ font-family:'Press Start 2P',monospace; font-size:.55rem;
+    color:var(--smoke); align-self:flex-start; padding-top:.2rem; }
+
+  .stage{ position:relative; width:min(720px,96vw); }
+  canvas{ display:block; width:100%; aspect-ratio:16/9;
+    border-radius:10px; border:2px solid rgba(232,226,214,.13); background:#000; }
+  .stage:fullscreen{ display:grid; place-items:center; background:#000; width:100%; }
+  .stage:fullscreen canvas{ width:auto; height:100%; border:none; border-radius:0; }
+
+  .overlay{ position:absolute; inset:0; display:grid; place-items:center;
+    text-align:center; background:rgba(10,7,8,.8); border-radius:10px; padding:1.4rem; }
+  .overlay.hidden{ display:none; }
+  .overlay h2{ font-family:'Press Start 2P',monospace; font-size:1.2rem; line-height:1.5;
+    color:var(--sodium); text-shadow:0 0 14px rgba(233,162,59,.5); margin-bottom:.9rem; }
+  .overlay p{ color:var(--smoke); font-size:.66rem; line-height:1.8;
+    margin-bottom:1.1rem; max-width:40ch; }
+  .overlay p b{ color:var(--bone); }
+  button{ font-family:'Press Start 2P',monospace; font-size:.68rem; cursor:pointer;
+    background:var(--neon); color:var(--ink); border:none; border-radius:6px;
+    padding:.95rem 1.3rem; }
+  button:active{ transform:translateY(1px); }
+  .hint{ width:min(720px,96vw); text-align:center; color:var(--smoke);
+    font-size:.55rem; letter-spacing:.05em; padding:.55rem 0; }
+</style>
+</head>
+<body>
+
+  <div class="hud">
+    <div>
+      <div class="ttl">DÉLIRE ASCII</div>
+      <div class="sub">un donut perdu dans l'espace · l'arrière-salle</div>
+    </div>
+    <div class="fps" id="fps"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" width="640" height="360"></canvas>
+    <div class="overlay" id="ov">
+      <div>
+        <h2>UN DONUT<br>PERDU DANS L'ESPACE</h2>
+        <p>Deux couches qui vivent chacune leur vie : derrière, un <b>ciel spatial</b> calculé pixel par pixel — devant, un <b>donut 3D en ASCII</b> (le légendaire donut.c) qui tourne et se balade tout seul. Guette l'OVNI.</p>
+        <button id="play">Décoller</button>
+      </div>
+    </div>
+  </div>
+  <div class="hint">double-clic : plein écran · F : fps · M : son</div>
+
+<script>
+/* ============================================================
+   ASCII CORE — « délire ASCII » sur fond d'espace demoscene
+   Deux couches indépendantes :
+   1. le FOND : ciel spatial pixel (320x180) — nébuleuse, étoiles
+      en parallaxe, planète à anneaux, lune, étoiles filantes.
+   2. le DEVANT : un donut 3D en ASCII (héritier de donut.c),
+      rampe ".,-~:;=!*#$@", qui tourne ET se balade tout seul.
+   Tout est déterministe en fonction du temps. Testé en Node.
+   ============================================================ */
+function AsciiCore(opts){
+  opts = opts || {};
+  const W = 320, H = 180;                    // fond pixel
+  const SW = 640, SH = 360;                  // écran de composition (shell)
+  const GW = 44, GH = 22;                    // grille ASCII du donut
+  const CW = 9, CH = 13;                     // taille d'une cellule (px écran)
+  const RAMP = '.,-~:;=!*#$@';
+  const ROT = opts.rotation || 1;
+  const DRIFT = opts.balade || 1;
+  const NSTARS = opts.etoiles || 160;
+
+  /* ---------- outils ---------- */
+  const SIN = new Float32Array(4096);
+  for (let i=0;i<4096;i++) SIN[i] = Math.sin(i/4096*Math.PI*2);
+  const K = 4096/(Math.PI*2);
+  const sinT = x => SIN[((x*K + 4194304)|0) & 4095];
+  function rng(seed){
+    let a = seed>>>0;
+    return function(){
+      a|=0; a=(a+0x6D2B79F5)|0;
+      let t=Math.imul(a^(a>>>15),1|a);
+      t=(t+Math.imul(t^(t>>>7),61|t))^t;
+      return ((t^(t>>>14))>>>0)/4294967296;
+    };
+  }
+  const px = (r,g,b)=> (255<<24)|((b&255)<<16)|((g&255)<<8)|(r&255);
+  function mix(c1, c2, a){
+    const r1=c1&255, g1=(c1>>8)&255, b1=(c1>>16)&255;
+    const r2=c2&255, g2=(c2>>8)&255, b2=(c2>>16)&255;
+    return px(r1+(r2-r1)*a, g1+(g2-g1)*a, b1+(b2-b1)*a);
+  }
+
+  /* ---------- ciel : couleur par ligne, précalculée ---------- */
+  const skyRow = new Uint32Array(H);
+  for (let y=0;y<H;y++){
+    const u = y/H;
+    skyRow[y] = mix(px(10,8,16), px(22,12,22), u);   // nuit violette du bar
+  }
+  const NEB1 = px(47,214,198), NEB2 = px(120,40,90);
+
+  /* ---------- état ---------- */
+  function makeState(){
+    const r = rng(42);
+    const stars = [];
+    for (let i=0;i<NSTARS;i++){
+      const layer = i%3;
+      stars.push({ x:r()*W, y:r()*H*0.96, layer,
+        sp:[2.2,5,9][layer], b:[90,150,235][layer],
+        tw:0.6+r()*2.4, ph:r()*6.28 });
+    }
+    return {
+      raw: new ArrayBuffer(W*H*4),
+      stars,
+      // balade du donut (coin haut-gauche de sa boîte, en px écran 640x360)
+      dx: 60, dy: 40, vx: 21*DRIFT, vy: 13.5*DRIFT,
+      grid: new Uint8Array(GW*GH),
+      zbuf: new Float32Array(GW*GH)
+    };
+  }
+
+  /* ---------- planète à anneaux + lune (passes pixel locales) ---------- */
+  const PCX=247, PCY=58, PR=30;              // planète
+  const RIN=1.45, ROUT=2.05, RSQ=0.30, RANG=-0.38;
+  const MCX=58, MCY=132, MR=11;              // lune
+  const cosR=Math.cos(RANG), sinR=Math.sin(RANG);
+  function ringPass(buf, t, front){
+    const y0=Math.max(0,PCY-PR*2.3)|0, y1=Math.min(H,PCY+PR*2.3)|0;
+    const x0=Math.max(0,PCX-PR*2.3)|0, x1=Math.min(W,PCX+PR*2.3)|0;
+    const sw = sinT(t*0.05)*2;
+    for (let y=y0;y<y1;y++){
+      for (let x=x0;x<x1;x++){
+        const dx=x-PCX-sw, dy=y-PCY;
+        const u = dx*cosR - dy*sinR;
+        const v = (dx*sinR + dy*cosR)/RSQ;
+        const r = Math.sqrt(u*u+v*v)/PR;
+        if (r<RIN || r>ROUT) continue;
+        const isFront = (dx*sinR + dy*cosR) > 0;
+        if (isFront !== front) continue;
+        const band = 0.55 + 0.45*sinT(r*22);
+        const a = (r<RIN+0.12||r>ROUT-0.12) ? 0.35 : 0.8;
+        buf[y*W+x] = mix(buf[y*W+x], px(233*band,162*band,59*band), a*0.8);
+      }
+    }
+  }
+  function spherePass(buf, t, cx, cy, R, kind){
+    const y0=Math.max(0,cy-R)|0, y1=Math.min(H,cy+R+1)|0;
+    const x0=Math.max(0,cx-R)|0, x1=Math.min(W,cx+R+1)|0;
+    const sw = kind===0 ? sinT(t*0.05)*2 : sinT(t*0.04+2)*3;
+    for (let y=y0;y<y1;y++){
+      for (let x=x0;x<x1;x++){
+        const nx=(x-cx-sw)/R, ny=(y-cy)/R;
+        const d2=nx*nx+ny*ny;
+        if (d2>1) continue;
+        const nz=Math.sqrt(1-d2);
+        let lum = Math.max(0, -nx*0.55 - ny*0.42 + nz*0.72) + 0.10;
+        let c;
+        if (kind===0){                       // planète : bandes oxblood/sodium
+          const band = 0.5+0.5*sinT(ny*4.2 + nx*0.7 + t*0.08);
+          c = mix(px(181,48,42), px(233,162,59), band*0.7);
+        } else {                             // lune : néon pâle
+          const spots = 0.5+0.5*sinT(nx*9+ny*7+4);
+          c = mix(px(26,92,86), px(47,214,198), spots*0.5);
+        }
+        lum = Math.min(1.25, lum);
+        buf[y*W+x] = px((c&255)*lum, ((c>>8)&255)*lum, ((c>>16)&255)*lum);
+      }
+    }
+  }
+
+  /* ---------- étoile filante (déterministe selon t) ---------- */
+  function shoot(t){
+    const epoch = Math.floor(t/9);
+    const r = rng(epoch*977+13);
+    if (r() > 0.7) return null;
+    const ft = (t - epoch*9)/0.7;
+    if (ft<0 || ft>=1) return null;
+    const x0 = 30+r()*(W-60), y0 = 10+r()*60;
+    const ang = 0.5 + r()*0.6;
+    const L = 90+r()*60;
+    return { x: x0+Math.cos(ang)*L*ft, y: y0+Math.sin(ang)*L*ft,
+             dx: Math.cos(ang), dy: Math.sin(ang), ft };
+  }
+
+  /* ---------- rendu du fond ---------- */
+  function bgRender(state, t, dt){
+    const buf = new Uint32Array(state.raw);
+    /* ciel + nébuleuse */
+    for (let y=0;y<H;y++){
+      const sky = skyRow[y];
+      const o=y*W;
+      const s1 = sinT(y*0.035 + t*0.11);
+      for (let x=0;x<W;x++){
+        let v = sinT(x*0.024 - t*0.07) + s1 + sinT((x+y)*0.013 + t*0.05);
+        v = (v+3)/6;                         // 0..1
+        let c = sky;
+        if (v>0.58){
+          const a=(v-0.58)*1.5;
+          const nc = mix(NEB1, NEB2, 0.5+0.5*sinT(x*0.02 - t*0.03));
+          c = mix(sky, nc, Math.min(0.5,a)*0.5);
+        }
+        buf[o+x] = c;
+      }
+    }
+    /* étoiles (3 couches de parallaxe, scintillement) */
+    for (const s of state.stars){
+      s.x -= s.sp*dt;
+      if (s.x < 0) { s.x += W; }
+      const b = Math.max(0, Math.min(255, s.b*(0.72+0.28*sinT(t*s.tw+s.ph))))|0;
+      const xi=s.x|0, yi=s.y|0;
+      buf[yi*W+xi] = px(b, b*0.98, b*0.92);
+      if (s.layer===2){
+        if (xi+1<W) buf[yi*W+xi+1] = px(b*0.5,b*0.5,b*0.47);
+        if (yi+1<H) buf[(yi+1)*W+xi] = px(b*0.5,b*0.5,b*0.47);
+      }
+    }
+    /* planète + anneaux (arrière, sphère, avant) puis lune */
+    ringPass(buf, t, false);
+    spherePass(buf, t, PCX, PCY, PR, 0);
+    ringPass(buf, t, true);
+    spherePass(buf, t, MCX, MCY, MR, 1);
+    /* étoile filante */
+    const sh = shoot(t);
+    if (sh){
+      for (let i=0;i<26;i++){
+        const xx=(sh.x - sh.dx*i*1.6)|0, yy=(sh.y - sh.dy*i*1.6)|0;
+        if (xx<0||xx>=W||yy<0||yy>=H) continue;
+        const a=(1-i/26)*(1-sh.ft*0.4);
+        buf[yy*W+xx] = mix(buf[yy*W+xx], px(255,244,220), a);
+      }
+    }
+    return sh;
+  }
+
+  /* ---------- le donut ASCII (pur produit de t) ---------- */
+  function donut(state, t){
+    const grid = state.grid, zbuf = state.zbuf;
+    grid.fill(255); zbuf.fill(0);
+    const A = t*1.05*ROT, B = t*0.62*ROT;
+    const cA=Math.cos(A), sA=Math.sin(A), cB=Math.cos(B), sB=Math.sin(B);
+    const K1x = 27.5, K1y = 15;
+    for (let j=0; j<6.28; j+=0.07){
+      const ct=Math.cos(j), st=Math.sin(j);
+      const h = ct+2;
+      for (let i=0; i<6.28; i+=0.02){
+        const cp=Math.cos(i), sp=Math.sin(i);
+        const D = 1/(sp*h*sA + st*cA + 5);
+        const tt = sp*h*cA - st*sA;
+        const x = (GW/2 + K1x*D*(cp*h*cB - tt*sB))|0;
+        const y = (GH/2 + K1y*D*(cp*h*sB + tt*cB))|0;
+        if (x<0||x>=GW||y<0||y>=GH) continue;
+        const o = y*GW+x;
+        if (D <= zbuf[o]) continue;
+        zbuf[o] = D;
+        let N = 8*((st*sA - sp*ct*cA)*cB - sp*ct*sA - st*cA - cp*ct*sB);
+        if (N<0) N=0; if (N>11) N=11;
+        grid[o] = N|0;
+      }
+    }
+    return grid;
+  }
+
+  /* ---------- la balade autonome du donut ---------- */
+  const BOXW = GW*CW, BOXH = GH*CH, MARGE = 8;
+  function moveDonut(state, dt){
+    state.dx += state.vx*dt;
+    state.dy += state.vy*dt;
+    if (state.dx < MARGE){ state.dx = MARGE; state.vx = Math.abs(state.vx); }
+    if (state.dx > SW-BOXW-MARGE){ state.dx = SW-BOXW-MARGE; state.vx = -Math.abs(state.vx); }
+    if (state.dy < MARGE){ state.dy = MARGE; state.vy = Math.abs(state.vy); }
+    if (state.dy > SH-BOXH-MARGE){ state.dy = SH-BOXH-MARGE; state.vy = -Math.abs(state.vy); }
+  }
+
+  /* ---------- l'OVNI ASCII qui passe ---------- */
+  const UFO = [' .---.', '<=(@@)=>', "  '-'"];
+  function ufo(t){
+    const epoch = Math.floor(t/17);
+    const r = rng(epoch*577+7);
+    if (r() > 0.62) return null;
+    const ft = (t - epoch*17)/6.5;
+    if (ft<0 || ft>=1) return null;
+    const dir = r()<0.5 ? 1 : -1;
+    const y = 30 + r()*(SH-140);
+    const x = dir>0 ? -80 + ft*(SW+160) : SW+80 - ft*(SW+160);
+    return { x, y, dir, lines:UFO, blink:((t*5)|0)&1,
+             bob: Math.sin(t*2.2)*6 };
+  }
+
+  return { W, H, SW, SH, GW, GH, CW, CH, RAMP,
+           makeState, bgRender, donut, moveDonut, ufo, shoot,
+           BOXW, BOXH };
+}
+if (typeof module !== 'undefined') module.exports = AsciiCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  ROTATION: 1.0,     // vitesse de rotation du donut
+  BALADE: 1.0,       // vitesse de sa balade dans l'écran
+  ETOILES: 160,      // nombre d'étoiles
+  SON: true          // ambiance sonore au lancement (M pour couper)
+};
+
+/* =================== MISE EN PLACE =================== */
+const core = AsciiCore({ rotation:REGLAGES.ROTATION,
+  balade:REGLAGES.BALADE, etoiles:REGLAGES.ETOILES });
+const state = core.makeState();
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const ov = document.getElementById('ov');
+const fpsEl = document.getElementById('fps');
+const stage = document.getElementById('stage');
+
+/* le fond 320x180 vit sur un canvas tampon, agrandi en gros pixels */
+const bgCv = document.createElement('canvas');
+bgCv.width = core.W; bgCv.height = core.H;
+const bgCtx = bgCv.getContext('2d');
+const img = new ImageData(new Uint8ClampedArray(state.raw), core.W, core.H);
+
+/* ---- atlas de glyphes : 12 caractères x 4 teintes de luminance ---- */
+const TIERS = ['#2a7a72', '#2FD6C6', '#E9A23B', '#FFF4DC'];
+const atlases = [];
+function buildAtlases(){
+  atlases.length = 0;
+  for (const col of TIERS){
+    const a = document.createElement('canvas');
+    a.width = core.RAMP.length*core.CW; a.height = core.CH;
+    const g = a.getContext('2d');
+    g.font = '700 12px "Space Mono", monospace';
+    g.textBaseline = 'top';
+    g.fillStyle = col;
+    for (let i=0;i<core.RAMP.length;i++)
+      g.fillText(core.RAMP[i], i*core.CW+1, 0);
+    atlases.push(a);
+  }
+}
+buildAtlases();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(buildAtlases);
+
+/* ---- son d'ambiance : nappe spatiale + ping d'étoile filante ---- */
+let AC=null, master=null, muted=!REGLAGES.SON;
+function audioInit(){
+  if (AC) return;
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain();
+    master.gain.value = muted ? 0 : 0.5;
+    master.connect(AC.destination);
+    const lp = AC.createBiquadFilter();
+    lp.type='lowpass'; lp.frequency.value = 260; lp.Q.value = 2;
+    lp.connect(master);
+    const lfo = AC.createOscillator(), lg = AC.createGain();
+    lfo.frequency.value = 0.06; lg.gain.value = 130;
+    lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
+    [[55,'sine',0.06],[82.41,'triangle',0.035],[110.5,'sine',0.018]].forEach(d=>{
+      const o=AC.createOscillator(), g=AC.createGain();
+      o.type=d[1]; o.frequency.value=d[0]; g.gain.value=d[2];
+      o.connect(g); g.connect(lp); o.start();
+    });
+  }catch(e){ AC=null; }
+}
+function ping(){
+  if (!AC || muted) return;
+  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(1400,t);
+  o.frequency.exponentialRampToValueAtTime(2300,t+0.45);
+  g.gain.setValueAtTime(0.035,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+0.5);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+0.55);
+}
+function setMute(m){
+  muted = m;
+  if (master) master.gain.value = muted ? 0 : 0.5;
+}
+
+/* ---- boucle ---- */
+let started=false, vt=0, last=performance.now();
+let prevShoot=false, showFps=false, fpsN=0, fpsT=0, fpsVal=0;
+
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = (now-last)/1000; last = now;
+  if (dt>0.1) dt=0.1;
+  vt += dt*(started?1:0.3);
+
+  /* couche 1 : le fond spatial */
+  const sh = core.bgRender(state, vt, dt);
+  if (sh && !prevShoot) ping();
+  prevShoot = !!sh;
+  bgCtx.putImageData(img, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(bgCv, 0, 0, core.SW, core.SH);
+
+  /* couche 2 : le donut ASCII, libre comme l'air */
+  core.moveDonut(state, dt);
+  const grid = core.donut(state, vt);
+  const dx = state.dx, dy = state.dy;
+  const glow = ctx.createRadialGradient(
+    dx+core.BOXW/2, dy+core.BOXH/2, 20,
+    dx+core.BOXW/2, dy+core.BOXH/2, core.BOXW*0.55);
+  glow.addColorStop(0,'rgba(47,214,198,.12)');
+  glow.addColorStop(1,'rgba(47,214,198,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(dx-40, dy-40, core.BOXW+80, core.BOXH+80);
+  for (let cy=0; cy<core.GH; cy++){
+    const o = cy*core.GW;
+    for (let cx=0; cx<core.GW; cx++){
+      const v = grid[o+cx];
+      if (v===255) continue;
+      ctx.drawImage(atlases[(v/3)|0], v*core.CW, 0, core.CW, core.CH,
+        dx+cx*core.CW, dy+cy*core.CH, core.CW, core.CH);
+    }
+  }
+
+  /* l'OVNI ASCII */
+  const u = core.ufo(vt);
+  if (u){
+    ctx.font = '700 13px "Space Mono", monospace';
+    ctx.textBaseline = 'top';
+    u.lines.forEach((ln,i)=>{
+      ctx.fillStyle = (i===1 && u.blink) ? '#E9A23B' : '#2FD6C6';
+      ctx.fillText(ln, u.x, u.y + u.bob + i*13);
+    });
+  }
+
+  fpsN++;
+  if (now - fpsT > 500){ fpsVal = Math.round(fpsN*1000/(now-fpsT)); fpsN=0; fpsT=now; }
+  fpsEl.textContent = showFps ? fpsVal+' FPS' : '';
+}
+
+/* ---- contrôles ---- */
+document.getElementById('play').addEventListener('click', ()=>{
+  started = true;
+  ov.classList.add('hidden');
+  audioInit();
+});
+addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  if (k==='f') showFps = !showFps;
+  if (k==='m') setMute(!muted);
+});
+cv.addEventListener('dblclick', ()=>{
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (stage.requestFullscreen) stage.requestFullscreen();
+});
+document.addEventListener('visibilitychange', ()=>{
+  if (!AC) return;
+  if (document.hidden) AC.suspend(); else AC.resume();
+});
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

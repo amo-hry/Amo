@@ -1,0 +1,265 @@
+<!-- ============================================================
+     ESQUIVE — L'arrière-salle  ·  jeu d'esquive façon vieille borne
+     Un seul fichier. Souris ou doigt : déplace ton point, évite le rouge.
+     À régler en premier :  <<< CHANGE ICI
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Esquive — L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+    --neon:#2FD6C6; --oxblood:#B5302A; --sodium:#E9A23B;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono', ui-monospace, monospace;
+    display:flex; flex-direction:column; align-items:center;
+    touch-action:none;
+  }
+  .head{
+    width:min(460px,94vw); display:flex; justify-content:space-between; align-items:flex-end;
+    padding:.9rem 0 .6rem;
+  }
+  .head h1{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:800;
+    font-size:1.5rem; letter-spacing:.04em; text-transform:uppercase; line-height:.9;
+    color:var(--neon); text-shadow:0 0 10px rgba(47,214,198,.45);
+  }
+  .head .sub{ font-size:.58rem; letter-spacing:.2em; text-transform:uppercase; color:var(--smoke); }
+  .scores{ text-align:right; font-size:.62rem; letter-spacing:.12em; text-transform:uppercase; color:var(--smoke); }
+  .scores b{ font-family:'Big Shoulders Display',sans-serif; font-size:1.5rem; color:var(--sodium); display:block; line-height:.9; }
+
+  .stage{ position:relative; width:min(460px,94vw); }
+  canvas{
+    display:block; width:100%; border-radius:14px;
+    border:1px solid rgba(232,226,214,.12);
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(233,162,59,.06), transparent 60%),
+      #100C0D;
+    box-shadow:0 0 40px rgba(0,0,0,.5) inset;
+  }
+  /* grain */
+  .stage::after{
+    content:""; position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    opacity:.35; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .overlay{
+    position:absolute; inset:0; display:grid; place-items:center; text-align:center;
+    background:rgba(14,10,11,.82); border-radius:14px; padding:1.5rem;
+  }
+  .overlay.hidden{ display:none; }
+  .overlay h2{
+    font-family:'Big Shoulders Display',sans-serif; font-weight:800;
+    font-size:2.6rem; text-transform:uppercase; line-height:.9; margin-bottom:.5rem;
+    color:var(--neon); text-shadow:0 0 16px rgba(47,214,198,.4);
+  }
+  .overlay h2.dead{ color:var(--oxblood); text-shadow:0 0 16px rgba(181,48,42,.4); }
+  .overlay p{ color:var(--smoke); font-size:.82rem; margin-bottom:1.3rem; max-width:26ch; }
+  .overlay p b{ color:var(--bone); }
+  button{
+    font-family:'Space Mono',monospace; font-weight:700; font-size:.82rem;
+    letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+    background:var(--neon); color:var(--ink); border:none; border-radius:10px;
+    padding:.9rem 1.6rem; transition:box-shadow .2s ease;
+  }
+  button:hover{ box-shadow:0 0 22px rgba(47,214,198,.45); }
+  .hint{ width:min(460px,94vw); text-align:center; color:var(--smoke); font-size:.62rem;
+    letter-spacing:.08em; padding:.7rem 0; }
+  @media (prefers-reduced-motion: reduce){ *{ transition:none!important; } }
+</style>
+</head>
+<body>
+
+  <div class="head">
+    <div>
+      <h1>Esquive</h1>
+      <div class="sub">L'arrière-salle · 3h07</div>
+    </div>
+    <div class="scores">
+      score<b id="score">0</b>
+      <span>record <span id="best">0</span></span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+    <div class="overlay" id="ov">
+      <div>
+        <h2 id="ovTitle">Esquive</h2>
+        <p id="ovText">Déplace ton point avec le <b>doigt</b> ou la <b>souris</b>. Évite les éclats rouges. Tiens le plus longtemps possible.</p>
+        <button id="play">Commencer</button>
+      </div>
+    </div>
+  </div>
+  <div class="hint">souris / doigt — ou flèches du clavier</div>
+
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const VITESSE_BASE = 130;   // vitesse de chute des éclats (px/s)
+const CADENCE_BASE = 0.85;  // secondes entre deux éclats au début
+const DIFFICULTE   = 0.020; // plus haut = ça accélère plus vite
+const RAYON_JOUEUR = 11;    // taille de ton point
+
+/* =================== MOTEUR ===================
+   pas besoin de toucher en dessous pour jouer */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const ov = document.getElementById("ov");
+const ovTitle = document.getElementById("ovTitle");
+const ovText = document.getElementById("ovText");
+const scoreEl = document.getElementById("score");
+const bestEl = document.getElementById("best");
+
+let W=0, H=0, dpr=1;
+function resize(){
+  const cssW = cv.clientWidth;
+  const cssH = Math.round(cssW * 1.25);     // arène un peu plus haute que large
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  cv.width = cssW*dpr; cv.height = cssH*dpr;
+  cv.style.height = cssH+"px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  W = cssW; H = cssH;
+}
+window.addEventListener("resize", resize);
+
+const player = { x:0, y:0, tx:0, ty:0 };
+let hazards=[], trail=[];
+let running=false, score=0, best=0, t=0, spawnTimer=0, shake=0;
+const keys={};
+
+function reset(){
+  resize();
+  player.x = player.tx = W/2;
+  player.y = player.ty = H*0.75;
+  hazards=[]; trail=[]; score=0; t=0; spawnTimer=0; shake=0;
+}
+function start(){
+  reset(); running=true; ov.classList.add("hidden");
+  last=performance.now(); requestAnimationFrame(loop);
+}
+function gameOver(){
+  running=false;
+  best=Math.max(best, Math.floor(score));
+  bestEl.textContent=best;
+  ovTitle.textContent="Touché"; ovTitle.className="dead";
+  ovText.innerHTML=`Tu as tenu <b>${Math.floor(score)}</b>. ${Math.floor(score)>=best && score>0 ? "Nouveau record." : "Record : "+best+"."}`;
+  document.getElementById("play").textContent="Rejouer";
+  ov.classList.remove("hidden");
+}
+
+/* ---- contrôles ---- */
+function pointerMove(e){
+  const r = cv.getBoundingClientRect();
+  const p = e.touches ? e.touches[0] : e;
+  player.tx = Math.max(0, Math.min(W, p.clientX - r.left));
+  player.ty = Math.max(0, Math.min(H, p.clientY - r.top));
+}
+cv.addEventListener("mousemove", pointerMove);
+cv.addEventListener("touchmove", e=>{ pointerMove(e); e.preventDefault(); }, {passive:false});
+cv.addEventListener("touchstart", e=>{ pointerMove(e); e.preventDefault(); }, {passive:false});
+addEventListener("keydown", e=>{ keys[e.key]=true; });
+addEventListener("keyup", e=>{ keys[e.key]=false; });
+
+function spawn(){
+  const size = 14 + Math.random()*22;
+  hazards.push({
+    x: Math.random()*(W-size), y:-size, w:size, h:size,
+    vy: VITESSE_BASE + t*VITESSE_BASE*DIFFICULTE + Math.random()*40,
+    vx: (Math.random()-.5)*30,
+    rot: Math.random()*Math.PI, vr:(Math.random()-.5)*3
+  });
+}
+
+function hit(h){
+  const cx = Math.max(h.x, Math.min(player.x, h.x+h.w));
+  const cy = Math.max(h.y, Math.min(player.y, h.y+h.h));
+  const dx = player.x-cx, dy = player.y-cy;
+  return dx*dx+dy*dy < RAYON_JOUEUR*RAYON_JOUEUR;
+}
+
+let last=0;
+function loop(now){
+  if(!running) return;
+  let dt=(now-last)/1000; last=now; if(dt>0.05) dt=0.05;
+  t+=dt; score+=dt*10;
+  scoreEl.textContent=Math.floor(score);
+
+  // clavier (en plus du pointeur)
+  const step=380*dt;
+  if(keys.ArrowLeft||keys.a) player.tx-=step;
+  if(keys.ArrowRight||keys.d) player.tx+=step;
+  if(keys.ArrowUp||keys.w) player.ty-=step;
+  if(keys.ArrowDown||keys.s) player.ty+=step;
+  player.tx=Math.max(0,Math.min(W,player.tx));
+  player.ty=Math.max(0,Math.min(H,player.ty));
+
+  // le point suit la cible en douceur
+  player.x += (player.tx-player.x)*Math.min(1,18*dt);
+  player.y += (player.ty-player.y)*Math.min(1,18*dt);
+  trail.push({x:player.x,y:player.y}); if(trail.length>12) trail.shift();
+
+  // apparition des éclats, de plus en plus souvent
+  spawnTimer-=dt;
+  const cadence=Math.max(0.16, CADENCE_BASE - t*DIFFICULTE);
+  if(spawnTimer<=0){ spawn(); spawnTimer=cadence; }
+
+  // déplacement + collision
+  for(let i=hazards.length-1;i>=0;i--){
+    const h=hazards[i];
+    h.y+=h.vy*dt; h.x+=h.vx*dt; h.rot+=h.vr*dt;
+    if(h.y>H+40){ hazards.splice(i,1); continue; }
+    if(hit(h)){ shake=14; draw(); return gameOver(); }
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function draw(){
+  ctx.save();
+  if(shake>0){ ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake); shake*=0.9; }
+  ctx.clearRect(-20,-20,W+40,H+40);
+
+  // traînée
+  for(let i=0;i<trail.length;i++){
+    const a=(i+1)/trail.length;
+    ctx.beginPath(); ctx.arc(trail[i].x,trail[i].y,RAYON_JOUEUR*a*0.8,0,7);
+    ctx.fillStyle=`rgba(47,214,198,${a*0.18})`; ctx.fill();
+  }
+  // éclats rouges
+  for(const h of hazards){
+    ctx.save();
+    ctx.translate(h.x+h.w/2,h.y+h.h/2); ctx.rotate(h.rot);
+    ctx.shadowColor="rgba(181,48,42,.8)"; ctx.shadowBlur=14;
+    ctx.fillStyle="#B5302A";
+    ctx.fillRect(-h.w/2,-h.h/2,h.w,h.h);
+    ctx.restore();
+  }
+  // le joueur (point néon)
+  ctx.shadowColor="rgba(47,214,198,.9)"; ctx.shadowBlur=18;
+  ctx.beginPath(); ctx.arc(player.x,player.y,RAYON_JOUEUR,0,7);
+  ctx.fillStyle="#2FD6C6"; ctx.fill();
+  ctx.shadowBlur=0; ctx.fillStyle="#0E0A0B";
+  ctx.beginPath(); ctx.arc(player.x,player.y,RAYON_JOUEUR*0.4,0,7); ctx.fill();
+  ctx.restore();
+}
+
+document.getElementById("play").addEventListener("click", start);
+resize();
+addEventListener("load", resize);
+</script>
+</body>
+</html>

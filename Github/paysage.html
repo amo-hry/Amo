@@ -1,0 +1,447 @@
+<!-- ============================================================
+     PAYSAGE ASCII — fond d'écran animé · L'arrière-salle
+     Un paysage entièrement en caractères, calculé en direct :
+     soleil qui pulse et rayonne, arbres qui bruissent au vent,
+     nuages qui dérivent, herbe qui ondule. S'adapte à toute la
+     fenêtre — fait pour tourner en fond d'écran web.
+     Double-clic / F : plein écran · T : changer d'ambiance
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paysage ASCII — L'arrière-salle</title>
+<style>
+  html,body{ height:100%; margin:0; overflow:hidden; background:#0E0A0B; }
+  #cv{ display:block; width:100vw; height:100vh; background:#1a2740; }
+  /* petit bandeau d'aide qui s'efface tout seul */
+  #aide{
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+    font-family:ui-monospace,'Courier New',monospace; font-size:12px;
+    color:rgba(232,226,214,.55); background:rgba(14,10,11,.55);
+    padding:7px 14px; border-radius:8px; letter-spacing:.05em;
+    pointer-events:none; transition:opacity 1.2s ease; z-index:10;
+    border:1px solid rgba(232,226,214,.12);
+  }
+  #aide.parti{ opacity:0; }
+</style>
+</head>
+<body>
+  <canvas id="cv"></canvas>
+  <div id="aide">double-clic : plein écran · T : ambiance · clic : un coup de vent</div>
+
+<script>
+/* ============================================================
+   PAYSAGE CORE — fond d'écran ASCII animé
+   Un paysage entièrement en caractères, calculé image par image
+   sur une grille COLS x ROWS adaptée à l'écran :
+     - un soleil qui pulse et tourne ses rayons
+     - des collines, de l'herbe qui ondule au vent
+     - des arbres dont le feuillage bruisse (vent + scintillement)
+     - des nuages qui dérivent et reviennent
+   Rendu = une grille { ch, col } que le shell peint en <canvas>.
+   Aucun DOM ici : tout est déterministe, testable en Node.
+   ============================================================ */
+function PaysageCore(opts){
+  opts = opts || {};
+
+  /* ---------- couleurs (l'arrière-salle, version aube) ---------- */
+  const COL = {
+    ciel0:'#1a2740', ciel1:'#3a4a6a', ciel2:'#7a5a6a',     // dégradé du ciel
+    soleil:'#E9A23B', rayon:'#E9A23B', halo:'#b5702a',
+    nuage:'#E8E2D6', nuageOmbre:'#8A8079',
+    tronc:'#8a5a3a', feuille0:'#2a7a52', feuille1:'#2FD6C6', feuille2:'#3a9a6a',
+    herbe0:'#2a6a44', herbe1:'#3a8a55', colline:'#1d4030',
+    oiseau:'#0E0A0B', etoile:'#E8E2D6'
+  };
+
+  /* ---------- aléa déterministe ---------- */
+  function mulberry32(seed){
+    let a=seed>>>0;
+    return function(){
+      a|=0; a=(a+0x6D2B79F5)|0;
+      let t=Math.imul(a^(a>>>15),1|a);
+      t=(t+Math.imul(t^(t>>>7),61|t))^t;
+      return ((t^(t>>>14))>>>0)/4294967296;
+    };
+  }
+  const SIN=new Float32Array(2048);
+  for(let i=0;i<2048;i++) SIN[i]=Math.sin(i/2048*Math.PI*2);
+  const K=2048/(Math.PI*2);
+  const sinT=x=>SIN[((x*K+2097152)|0)&2047];
+
+  /* ---------- construction d'une scène pour une taille donnée ---------- */
+  function makeScene(cols, rows, seed){
+    cols=Math.max(40,Math.min(400,cols|0));
+    rows=Math.max(20,Math.min(200,rows|0));
+    seed = seed||1234;
+    const rng=mulberry32(seed);
+
+    const horizon = Math.round(rows*0.62);     // ligne sol/ciel
+    const sun = {
+      x: Math.round(cols*0.78),
+      y: Math.round(rows*0.22),
+      r: Math.max(3, Math.round(Math.min(cols,rows*2)*0.05))
+    };
+
+    // étoiles (en haut du ciel, scintillent faiblement)
+    const stars=[];
+    const nStars=Math.round(cols*rows*0.012);
+    for(let i=0;i<nStars;i++){
+      const sx=rng()*cols, sy=rng()*horizon*0.7;
+      stars.push({x:sx|0, y:sy|0, ph:rng()*6.28, sp:0.5+rng()*1.5});
+    }
+
+    // nuages : amas de "blobs" qui dérivent
+    const clouds=[];
+    const nClouds=Math.max(2, Math.round(cols/26));
+    for(let i=0;i<nClouds;i++){
+      clouds.push({
+        x: rng()*cols,
+        y: Math.round(rows*0.08 + rng()*horizon*0.4),
+        w: 6+rng()*10,
+        sp: (0.4+rng()*0.9)*(rng()<0.5?1:0.6),
+        puffs: 3+(rng()*3|0),
+        seed: rng()*1000
+      });
+    }
+
+    // arbres : posés sur le sol, tailles variées, plus petits au loin (gauche)
+    const trees=[];
+    const nTrees=Math.max(3, Math.round(cols/14));
+    const used=[];
+    for(let i=0;i<nTrees;i++){
+      let tx, tries=0;
+      do { tx=2+rng()*(cols-4); tries++; }
+      while(tries<20 && used.some(u=>Math.abs(u-tx)<cols*0.06));
+      used.push(tx);
+      const grand = rng();
+      const h = Math.round(rows*(0.12 + grand*0.20));     // hauteur du tronc+houppier
+      const rayon = Math.max(2, Math.round(h*0.5));
+      trees.push({
+        x: tx|0,
+        baseY: horizon + Math.round(rng()*2),             // un peu de profondeur
+        h, rayon,
+        phase: rng()*6.28,
+        ampl: 0.5 + rng()*0.9,                            // amplitude de balancement
+        seed: rng()*1000,
+        teinte: rng()
+      });
+    }
+    trees.sort((a,b)=>a.baseY-b.baseY);                   // les plus hauts (loin) derrière
+
+    // oiseaux occasionnels
+    const birds=[];
+    const nBirds=Math.max(2, Math.round(cols/40));
+    for(let i=0;i<nBirds;i++)
+      birds.push({ x:rng()*cols, y:Math.round(rows*0.12+rng()*rows*0.2),
+        sp:3+rng()*3, ph:rng()*6.28, dir: rng()<0.5?1:-1 });
+
+    return { cols, rows, horizon, sun, stars, clouds, trees, birds, seed };
+  }
+
+  /* ---------- la grille de sortie ---------- */
+  function makeGrid(cols, rows){
+    const n=cols*rows;
+    return { cols, rows, ch:new Array(n).fill(' '), col:new Array(n).fill(COL.ciel0) };
+  }
+  function put(g, x, y, ch, col){
+    if(x<0||y<0||x>=g.cols||y>=g.rows) return;
+    const i=y*g.cols+x;
+    g.ch[i]=ch; g.col[i]=col;
+  }
+  function get(g,x,y){
+    if(x<0||y<0||x>=g.cols||y>=g.rows) return ' ';
+    return g.ch[y*g.cols+x];
+  }
+
+  /* ---------- palettes de caractères ---------- */
+  const C_RAYON_DROIT='|', C_RAYON_DIAG=['/','\\'];
+  const FEUILLES='@&%#*';                 // densité du houppier
+  const HERBES=['.',',','\'','`','v','w'];
+  const NUAGE='(@%#oO.';
+
+  /* ---------- le rendu d'une image ---------- */
+  function render(scene, grid, t){
+    const g=grid, S=scene;
+    const { cols, rows, horizon } = S;
+    const wind = sinT(t*0.25)*0.5 + sinT(t*0.62+1)*0.3;   // vent global -1..1 (doux)
+
+    /* --- ciel en dégradé --- */
+    for(let y=0;y<horizon;y++){
+      const u=y/horizon;
+      const c = u<0.4 ? COL.ciel0 : u<0.75 ? COL.ciel1 : COL.ciel2;
+      for(let x=0;x<cols;x++){ const i=y*cols+x; g.ch[i]=' '; g.col[i]=c; }
+    }
+
+    /* --- étoiles (scintillent, s'effacent près du soleil/sol) --- */
+    for(const st of S.stars){
+      const tw=0.5+0.5*sinT(t*st.sp+st.ph);
+      if(tw>0.55){
+        const ch = tw>0.85?'*':tw>0.7?'+':'.';
+        put(g, st.x, st.y, ch, COL.etoile);
+      }
+    }
+
+    /* --- le soleil : disque + halo + rayons tournants --- */
+    const sun=S.sun;
+    const pulse = 1 + sinT(t*1.1)*0.12;
+    const R = sun.r*pulse;
+    // rayons (8 branches qui tournent lentement et palpitent)
+    const nRay=12;
+    for(let k=0;k<nRay;k++){
+      const ang = (k/nRay)*Math.PI*2 + t*0.18;
+      const len = R*(1.7 + sinT(t*2 + k)*0.5);
+      const dx=Math.cos(ang), dy=Math.sin(ang)*0.5;        // *0.5 : la grille est "haute"
+      for(let s=R*1.05; s<len; s+=0.8){
+        const x=Math.round(sun.x+dx*s), y=Math.round(sun.y+dy*s);
+        if(get(g,x,y)===' '){
+          // caractère selon l'orientation
+          let ch=C_RAYON_DROIT;
+          if(Math.abs(dx)>0.5 && Math.abs(dy)<0.25) ch='-';
+          else if(dx*dy>0) ch='\\'; else if(dx*dy<0) ch='/';
+          put(g,x,y,ch,COL.rayon);
+        }
+      }
+    }
+    // halo + disque
+    for(let dy=-Math.ceil(R)-1; dy<=Math.ceil(R)+1; dy++){
+      for(let dx=-Math.ceil(R*2)-1; dx<=Math.ceil(R*2)+1; dx++){
+        const d=Math.sqrt(dx*dx+(dy*2)*(dy*2));            // *2 : compense la hauteur des cases
+        const x=sun.x+dx, y=sun.y+dy;
+        if(d<=R){
+          const ch = d<R*0.55?'@':d<R*0.85?'%':'#';
+          put(g,x,y,ch,COL.soleil);
+        } else if(d<=R*1.35 && get(g,x,y)===' '){
+          if((dx+dy+((t*3)|0))%3===0) put(g,x,y,'.',COL.halo);
+        }
+      }
+    }
+
+    /* --- nuages : amas de blobs qui dérivent --- */
+    for(const cl of S.clouds){
+      const cx = ((cl.x + t*cl.sp) % (cols+cl.w*2)) - cl.w;  // boucle douce
+      const cr=mulberry32((cl.seed|0)+1);
+      for(let p=0;p<cl.puffs;p++){
+        const ox=(cr()*2-1)*cl.w, oy=(cr()*2-1)*2;
+        const pr=cl.w*(0.4+cr()*0.5);
+        for(let dy=-2;dy<=2;dy++){
+          for(let dx=-pr;dx<=pr;dx++){
+            const d=Math.abs(dx)/pr + Math.abs(dy)/2.2;
+            if(d<=1){
+              const x=Math.round(cx+ox+dx), y=Math.round(cl.y+oy+dy);
+              if(y<horizon-1){
+                const dense=1-d;
+                const ch = dense>0.7?'@':dense>0.45?'%':dense>0.2?'o':'.';
+                const col = dy>1?COL.nuageOmbre:COL.nuage;
+                put(g,x,y,ch,col);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    /* --- oiseaux (petits "v" qui battent des ailes) --- */
+    for(const b of S.birds){
+      const bx=((b.x + b.dir*t*b.sp)%(cols+8)+cols+8)%(cols+8)-4;
+      const by=b.y + sinT(t*0.6+b.ph)*2;
+      const flap = sinT(t*8+b.ph)>0 ? 'v' : '~';
+      put(g, Math.round(bx), Math.round(by), flap, COL.oiseau);
+    }
+
+    /* --- collines (deux couches) avec texture de relief --- */
+    for(let x=0;x<cols;x++){
+      const h1=horizon + Math.round(sinT(x*0.05+1)*1.5 + sinT(x*0.13)*1);
+      const h2=horizon + Math.round(2 + sinT(x*0.08+3)*2);
+      for(let y=h1;y<rows;y++){
+        const proche = y>=h2;
+        // texture douce de pente : points et apostrophes clairsemés
+        const n=(x*5+y*11+((t*1.5)|0))%7;
+        let ch=' ';
+        if(!proche){ ch = n<2?'.':n<3?'`':' '; }       // colline lointaine, discrète
+        put(g,x,y, ch, proche?COL.herbe0:COL.colline);
+      }
+    }
+
+    /* --- les arbres : tronc + houppier qui bruisse --- */
+    for(const tr of S.trees) drawTree(g, tr, t, wind);
+
+    /* --- herbe : tout le premier plan sous les arbres, ondule au vent --- */
+    const grassTop=horizon+3;
+    for(let y=grassTop;y<rows;y++){
+      const densite = (y-grassTop)/(rows-grassTop);        // plus dense en bas
+      for(let x=0;x<cols;x++){
+        if(get(g,x,y)!==' ' && g.col[y*cols+x]!==COL.herbe0) continue;  // ne pas écraser les troncs
+        const sway=sinT(x*0.4 + t*1.6 + y*0.5)*0.5 + wind;
+        const k=(x*7+y*13+((t*4)|0))%HERBES.length;
+        // en bas : touffes denses ; vers l'horizon : brins clairsemés
+        const seuil = 0.25 + (1-densite)*0.5;
+        if(((x*13+y*7)%10)/10 < densite*0.9 + 0.25){
+          const ch = sway>0.4?HERBES[(k+1)%HERBES.length]:HERBES[k%HERBES.length];
+          put(g,x,y,ch, (x+y)%2?COL.herbe0:COL.herbe1);
+        }
+      }
+    }
+
+    return g;
+  }
+
+  function drawTree(g, tr, t, wind){
+    const cols=g.cols;
+    // balancement : le sommet bouge plus que la base
+    const sway = (sinT(t*1.1 + tr.phase) + wind*0.6) * tr.ampl;
+    const troncH = Math.round(tr.h*0.45);
+    const topY = tr.baseY - tr.h;
+    // tronc
+    for(let k=0;k<troncH;k++){
+      const y=tr.baseY-k;
+      const bend = Math.round(sway * (k/troncH) * 1.2);
+      put(g, tr.x+bend, y, k===0?'A':'|', COL.tronc);
+      if(k>0 && k<troncH-1 && k%3===0) put(g, tr.x+bend+1, y, '/', COL.tronc);
+    }
+    // houppier : disque de feuilles qui scintille
+    const cyTop = tr.baseY - troncH;                       // base du houppier
+    const rad = tr.rayon;
+    const swayTop = Math.round(sway*1.2);
+    const rng=mulberry32((tr.seed|0)+ ((t*2)|0));          // re-scintille dans le temps
+    for(let dy=-rad*2; dy<=rad*0.6; dy++){
+      for(let dx=-rad; dx<=rad; dx++){
+        const d=Math.sqrt(dx*dx + (dy*0.5)*(dy*0.5))/rad;
+        if(d<=1){
+          // bruissement : densité qui varie
+          const noise = sinT(dx*0.9 + dy*0.7 + t*3 + tr.seed)*0.5+0.5;
+          const fall = 1-d;
+          if(fall + noise*0.4 > 0.5){
+            const lean = Math.round(swayTop * ((cyTop+dy - tr.baseY) / -tr.h));
+            const x=tr.x+dx+lean;
+            const y=cyTop+dy;
+            const idx=Math.min(FEUILLES.length-1, Math.floor((fall+noise*0.5)*FEUILLES.length));
+            const ch=FEUILLES[idx];
+            // teinte : un éclat turquoise occasionnel qui "respire"
+            let col=COL.feuille0;
+            const sparkle=sinT(dx*2+dy*3+t*4+tr.seed*2);
+            if(sparkle>0.78) col=COL.feuille1;
+            else if(noise>0.6) col=COL.feuille2;
+            put(g,x,y,ch,col);
+          }
+        }
+      }
+    }
+  }
+
+  return { COL, makeScene, makeGrid, render, sinT,
+           FEUILLES, HERBES };
+}
+if(typeof module!=='undefined') module.exports = PaysageCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  TAILLE_CAR: 12,     // taille des caractères en px (plus petit = plus de détail)
+  VITESSE: 1.0,       // vitesse globale de l'animation
+  AMBIANCE: 0,        // 0 = aube, 1 = nuit, 2 = couchant (T pour changer en direct)
+  GRAINE: 1234        // change ce nombre = autre disposition d'arbres/nuages
+};
+
+/* =================== MISE EN PLACE =================== */
+const core = PaysageCore();
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const aide = document.getElementById('aide');
+
+/* ambiances : on remplace quelques couleurs du moteur */
+const AMBIANCES = [
+  { nom:'aube',     ciel:['#1a2740','#3a4a6a','#7a5a6a'], soleil:'#E9A23B', halo:'#b5702a' },
+  { nom:'nuit',     ciel:['#0a0f1e','#162038','#2a2440'], soleil:'#E8E2D6', halo:'#3a4a6a' },
+  { nom:'couchant', ciel:['#2a1530','#6a2a3a','#b5302a'], soleil:'#E0392F', halo:'#E9A23B' }
+];
+let ambiance = REGLAGES.AMBIANCE % AMBIANCES.length;
+function appliquerAmbiance(){
+  const a = AMBIANCES[ambiance];
+  core.COL.ciel0 = a.ciel[0]; core.COL.ciel1 = a.ciel[1]; core.COL.ciel2 = a.ciel[2];
+  core.COL.soleil = a.soleil; core.COL.rayon = a.soleil; core.COL.halo = a.halo;
+  // la nuit : plus d'étoiles visibles, soleil = lune pâle
+  document.body.style.background = a.ciel[0];
+}
+appliquerAmbiance();
+
+/* grille adaptée à l'écran */
+let scene=null, grid=null, CW=8, CH=14, dpr=1, coupVent=0;
+function dim(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  const cssW = window.innerWidth, cssH = window.innerHeight;
+  cv.width = Math.round(cssW*dpr);
+  cv.height = Math.round(cssH*dpr);
+  // taille des caractères (en px CSS), un peu plus haut que large (police mono)
+  const base = REGLAGES.TAILLE_CAR;
+  CW = base*0.6; CH = base;
+  const cols = Math.floor(cssW / CW);
+  const rows = Math.floor(cssH / CH);
+  scene = core.makeScene(cols, rows, REGLAGES.GRAINE);
+  grid = core.makeGrid(cols, rows);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.font = `${base}px ui-monospace, 'SF Mono', 'Courier New', monospace`;
+  ctx.textBaseline = 'top';
+}
+addEventListener('resize', dim);
+dim();
+
+/* boucle */
+let t0 = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let t = (now - t0)/1000 * REGLAGES.VITESSE;
+  if (coupVent>0){ t += coupVent; coupVent = Math.max(0, coupVent - 0.016*2); }
+  core.render(scene, grid, t);
+
+  // peinture de la grille : on EFFACE (le dégradé CSS du canvas transparaît
+  // dans les cases "espace"), puis on peint uniquement les caractères.
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const cols=grid.cols, rows=grid.rows;
+  let prevCol=null;
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      const ch=grid.ch[i];
+      if(ch===' ') continue;
+      if(grid.col[i]!==prevCol){ ctx.fillStyle=grid.col[i]; prevCol=grid.col[i]; }
+      ctx.fillText(ch, x*CW, y*CH);
+    }
+  }
+}
+requestAnimationFrame(frame);
+
+/* habillage du fond derrière les caractères (dégradé ciel + sol) */
+/* on le pose en CSS sur le canvas pour que les cases "espace" laissent voir le dégradé */
+function majFond(){
+  const a = AMBIANCES[ambiance];
+  const hPct = scene ? Math.round(scene.horizon/scene.rows*100) : 60;
+  cv.style.background =
+    `linear-gradient(180deg, ${a.ciel[0]} 0%, ${a.ciel[1]} ${hPct*0.6|0}%, ${a.ciel[2]} ${hPct}%, ${core.COL.herbe0} ${hPct}%, ${core.COL.herbe0} 100%)`;
+}
+majFond();
+
+/* interactions */
+let aideTimer = setTimeout(()=>aide.classList.add('parti'), 5000);
+function reAide(){ aide.classList.remove('parti'); clearTimeout(aideTimer);
+  aideTimer=setTimeout(()=>aide.classList.add('parti'),3000); }
+
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if(k==='f'){ toggleFull(); }
+  if(k==='t'){ ambiance=(ambiance+1)%AMBIANCES.length; appliquerAmbiance(); majFond(); reAide(); }
+});
+cv.addEventListener('dblclick', toggleFull);
+cv.addEventListener('click', ()=>{ coupVent += 1.2; reAide(); });   // un coup de vent
+function toggleFull(){
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+}
+addEventListener('fullscreenchange', ()=>setTimeout(dim,60));
+</script>
+</body>
+</html>

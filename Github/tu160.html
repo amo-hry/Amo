@@ -1,0 +1,485 @@
+<!-- ============================================================
+     TU-160 — « White Swan » en 3D ASCII · L'arrière-salle
+     Le bombardier russe modélisé en 3D (vrai maillage) qui
+     tourne sur lui-même, rendu en ASCII solide avec éclairage.
+     Glisser : faire tourner à la main · molette : zoomer
+     A : rotation auto · F : plein écran · W : flèche des ailes
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Tu-160 — 3D ASCII · L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{ --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+         --neon:#2FD6C6; --oxblood:#E0392F; --sodium:#E9A23B; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono',monospace;
+    display:flex; flex-direction:column; align-items:center;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+    background-image:
+      radial-gradient(70vw 60vw at 50% -20%, rgba(47,214,198,.06), transparent 60%),
+      radial-gradient(50vw 50vw at 50% 120%, rgba(233,162,59,.05), transparent 60%);
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:999; pointer-events:none;
+    opacity:.22; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hud{ width:min(820px,96vw); display:flex; justify-content:space-between;
+    align-items:flex-end; padding:.6rem 0 .35rem; z-index:5; }
+  .hud .ttl{ font-family:'Press Start 2P',monospace; font-size:.8rem;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.25); }
+  .hud .sub{ font-size:.52rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--smoke); margin-top:.4rem; }
+  .hud .meta{ text-align:right; font-size:.54rem; letter-spacing:.06em;
+    color:var(--smoke); line-height:1.7; }
+  .hud .meta b{ color:var(--sodium); }
+
+  .stage{ position:relative; width:min(820px,96vw); flex:1 1 auto;
+    display:flex; align-items:center; justify-content:center; min-height:0; }
+  canvas{ display:block; width:100%; height:100%;
+    border-radius:10px; border:2px solid rgba(232,226,214,.12);
+    background:radial-gradient(120% 90% at 50% 38%, #14131f 0%, #0b0a10 70%, #08070b 100%);
+    cursor:grab; }
+  canvas:active{ cursor:grabbing; }
+
+  .specs{ width:min(820px,96vw); display:flex; gap:.4rem; padding:.5rem 0 .2rem;
+    flex-wrap:wrap; justify-content:center; }
+  .specs .s{ font-size:.54rem; letter-spacing:.05em; text-transform:uppercase;
+    color:var(--smoke); border:1px solid rgba(232,226,214,.14);
+    border-radius:7px; padding:.3rem .55rem; }
+  .specs .s b{ color:var(--bone); }
+  .legend{ display:flex; gap:.55rem; align-items:center; }
+  .legend i{ width:9px; height:9px; border-radius:2px; display:inline-block; margin-right:3px; vertical-align:middle; }
+
+  .hint{ width:min(820px,96vw); text-align:center; color:var(--smoke);
+    font-size:.54rem; letter-spacing:.05em; padding:.35rem 0; }
+  @media (max-height:560px){ .specs{ display:none; } }
+</style>
+</head>
+<body>
+
+  <div class="hud">
+    <div>
+      <div class="ttl">TU-160</div>
+      <div class="sub">Tupolev · « White Swan » · 3D ASCII</div>
+    </div>
+    <div class="meta">
+      cap <b id="cap">0°</b><br>
+      flèche aile <b id="fleche">62%</b>
+    </div>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+  </div>
+
+  <div class="specs" id="specs">
+    <div class="s">long. <b>54,1 m</b></div>
+    <div class="s">enverg. <b>55,7 m</b></div>
+    <div class="s">vitesse <b>Mach 2,05</b></div>
+    <div class="s">4× <b>NK-32</b></div>
+    <div class="legend s">
+      <span><i style="background:#E8E2D6"></i>fuselage</span>
+      <span><i style="background:#2FD6C6"></i>ailes</span>
+      <span><i style="background:#8A8079"></i>moteurs</span>
+      <span><i style="background:#E9A23B"></i>empennage</span>
+    </div>
+  </div>
+  <div class="hint" id="hint">glisser : tourner à la main · molette : zoom · A : rotation auto · W : flèche des ailes · F : plein écran</div>
+
+<script>
+/* ============================================================
+   TU160 CORE — le Tupolev Tu-160 « White Swan » en 3D ASCII
+   Un vrai maillage 3D de l'avion (nez pointu, fuselage profilé,
+   ailes à flèche, 2 nacelles moteur sous le ventre, dérive,
+   plans horizontaux) qu'on fait tourner sur lui-même. Rendu
+   ASCII solide : rastérisation de triangles avec tampon de
+   profondeur (z-buffer) et éclairage de studio.
+   Aucun DOM : maillage + rotation + projection testables en Node.
+   ============================================================ */
+function Tu160Core(opts){
+  opts = opts || {};
+  const RAMP = " .,-~:;=!*#$@";          // densité = luminosité (0 = vide)
+  // matériaux : 0 corps, 1 aile, 2 moteur, 3 dérive/plans, 4 verrière
+  const MAT = { corps:0, aile:1, moteur:2, queue:3, verriere:4 };
+
+  /* ---------- construction du maillage ---------- */
+  function buildModel(sweep){
+    sweep = (sweep==null) ? 0.62 : sweep;   // flèche des ailes (0 droit .. 1 très en flèche)
+    const V = [];                           // sommets [x,y,z]
+    const T = [];                           // triangles {a,b,c,m}
+    const vi = (x,y,z)=>{ V.push([x,y,z]); return V.length-1; };
+    const tri=(a,b,c,m)=>T.push({a,b,c,m});
+    const quad=(a,b,c,d,m)=>{ tri(a,b,c,m); tri(a,c,d,m); };
+
+    /* --- fuselage : anneaux elliptiques le long de z ---
+       z : +avant (nez) .. -arrière (queue). Corps aplati, nez pointu. */
+    const stations = [
+      // z,    demiLargeur, demiHauteur, centreY
+      [ 1.42, 0.004, 0.004, 0.015],   // pointe du nez
+      [ 1.20, 0.035, 0.045, 0.005],
+      [ 1.00, 0.060, 0.065, 0.000],   // zone cockpit
+      [ 0.72, 0.090, 0.082,-0.008],
+      [ 0.42, 0.120, 0.095,-0.015],
+      [ 0.10, 0.150, 0.100,-0.018],   // section centrale (corps le plus large)
+      [-0.10, 0.150, 0.100,-0.018],
+      [-0.35, 0.140, 0.098,-0.016],
+      [-0.62, 0.110, 0.090,-0.010],
+      [-0.86, 0.075, 0.072, 0.000],
+      [-1.04, 0.050, 0.058, 0.012],   // sortie tuyères / base de queue
+      [-1.16, 0.026, 0.038, 0.020]
+    ];
+    const NR = 12;                          // points par anneau
+    const rings = [];
+    for (const s of stations){
+      const [z,w,h,cy]=s, ring=[];
+      for (let k=0;k<NR;k++){
+        const a = k/NR*Math.PI*2;
+        ring.push(vi(Math.cos(a)*w, cy+Math.sin(a)*h, z));
+      }
+      rings.push(ring);
+    }
+    for (let r=0;r<rings.length-1;r++)
+      for (let k=0;k<NR;k++){
+        const k2=(k+1)%NR;
+        quad(rings[r][k], rings[r][k2], rings[r+1][k2], rings[r+1][k], MAT.corps);
+      }
+    // bouchon du nez (cône) et de la queue
+    const noseTip = vi(0,0.015,1.46);
+    for (let k=0;k<NR;k++) tri(rings[0][k], rings[0][(k+1)%NR], noseTip, MAT.corps);
+    const tailTip = vi(0,0.020,-1.22);
+    for (let k=0;k<NR;k++) tri(rings[rings.length-1][(k+1)%NR], rings[rings.length-1][k], tailTip, MAT.corps);
+
+    /* --- helper : dalle fine (aile/dérive) à partir de 4 coins + épaisseur --- */
+    function dalle(p1,p2,p3,p4, axe, t, m){
+      const off=(p,s)=>{
+        const q=p.slice();
+        q[axe]+=s*t;
+        return vi(q[0],q[1],q[2]);
+      };
+      const t1=off(p1,1),t2=off(p2,1),t3=off(p3,1),t4=off(p4,1);
+      const b1=off(p1,-1),b2=off(p2,-1),b3=off(p3,-1),b4=off(p4,-1);
+      quad(t1,t2,t3,t4,m);                  // dessus
+      quad(b1,b4,b3,b2,m);                  // dessous
+      const tp=[t1,t2,t3,t4], bt=[b1,b2,b3,b4];
+      for (let i=0;i<4;i++){                // tranches
+        const j=(i+1)%4;
+        quad(tp[i],bt[i],bt[j],tp[j],m);
+      }
+    }
+
+    /* --- ailes à géométrie variable (flèche) --- */
+    const baseLE_z = 0.18, baseTE_z = -0.28;             // racine
+    const tipDX = 0.66;                                  // envergure d'une aile
+    const tipLE_z = baseLE_z - sweep*0.55;               // décalage arrière du saumon
+    const tipTE_z = tipLE_z - 0.22;
+    const wingY = -0.030;
+    [ +1, -1 ].forEach(side=>{
+      const rx = 0.135*side, tx=tipDX*side;
+      dalle(
+        [rx, wingY, baseLE_z], [tx, wingY, tipLE_z],
+        [tx, wingY, tipTE_z], [rx, wingY, baseTE_z],
+        1, 0.012, MAT.aile);               // épaisseur sur y
+      // petite glove (raccord épais aile-fuselage) côté bord d'attaque
+      dalle(
+        [rx*0.4, wingY, baseLE_z+0.12], [rx, wingY, baseLE_z],
+        [rx, wingY, baseTE_z], [rx*0.4, wingY, baseTE_z-0.02],
+        1, 0.02, MAT.aile);
+    });
+
+    /* --- nacelles moteur : 2 boîtes carrées sous le ventre, par paires --- */
+    function boite(cx,cy,cz, sx,sy,sz, m){
+      const c=[];
+      for (const dz of [sz,-sz]) for (const dy of [sy,-sy]) for (const dx of [sx,-sx])
+        c.push(vi(cx+dx, cy+dy, cz+dz));
+      // indices : 0..7 (z+ : 0-3, z- : 4-7), ordre (dy,dx)
+      quad(c[0],c[1],c[3],c[2],m);          // avant (entrée carrée)
+      quad(c[4],c[6],c[7],c[5],m);          // arrière (tuyère)
+      quad(c[0],c[2],c[6],c[4],m);          // côté
+      quad(c[1],c[5],c[7],c[3],m);          // côté
+      quad(c[0],c[4],c[5],c[1],m);          // dessus
+      quad(c[2],c[3],c[7],c[6],m);          // dessous
+    }
+    [ +1, -1 ].forEach(side=>{
+      boite(0.095*side, -0.110, -0.12,  0.055, 0.050, 0.62, MAT.moteur);
+    });
+
+    /* --- dérive verticale (haute, en flèche) --- */
+    dalle(
+      [0, 0.085, -0.55], [0, 0.46, -0.80],
+      [0, 0.46, -0.96],  [0, 0.085, -0.97],
+      0, 0.014, MAT.queue);                 // épaisseur sur x
+    // petit bulbe en haut de dérive
+    dalle(
+      [0, 0.44, -0.82],[0,0.50,-0.86],[0,0.50,-0.92],[0,0.44,-0.94],
+      0,0.02,MAT.queue);
+
+    /* --- plans horizontaux (stabilisateurs) à l'arrière --- */
+    [ +1, -1 ].forEach(side=>{
+      const rx=0.05*side, tx=0.30*side;
+      dalle(
+        [rx, 0.055, -0.66], [tx, 0.055, -0.86],
+        [tx, 0.055, -1.00], [rx, 0.055, -0.96],
+        1, 0.010, MAT.queue);
+    });
+
+    /* --- verrière (petit dôme sur l'avant) --- */
+    const cz0=0.95;
+    const cb1=vi(-0.045,0.06,cz0+0.06), cb2=vi(0.045,0.06,cz0+0.06),
+          cb3=vi(0.05,0.06,cz0-0.14),  cb4=vi(-0.05,0.06,cz0-0.14);
+    const ct=vi(0,0.105,cz0-0.04);
+    tri(cb1,cb2,ct,MAT.verriere); tri(cb2,cb3,ct,MAT.verriere);
+    tri(cb3,cb4,ct,MAT.verriere); tri(cb4,cb1,ct,MAT.verriere);
+
+    return { V, T };
+  }
+
+  let model = buildModel(opts.sweep);
+
+  /* ---------- grille de sortie ---------- */
+  function makeGrid(cols, rows){
+    const n=cols*rows;
+    return { cols, rows, ch:new Array(n).fill(' '), mat:new Int8Array(n).fill(-1),
+             zb:new Float32Array(n) };
+  }
+
+  /* ---------- rotation + projection + rastérisation ---------- */
+  function render(grid, t, params){
+    params = params || {};
+    const yaw = params.yaw!=null ? params.yaw : t*0.7;       // tourne sur lui-même
+    const pitchView = params.pitch!=null ? params.pitch : 0.32; // vu un peu de dessus
+    const bob = Math.sin(t*0.9)*0.05;                        // léger tangage
+    const roll = Math.sin(t*0.5)*0.06;                       // léger roulis stylé
+    const cols=grid.cols, rows=grid.rows;
+    grid.ch.fill(' '); grid.mat.fill(-1); grid.zb.fill(-1e9);
+
+    const cy1=Math.cos(yaw), sy1=Math.sin(yaw);
+    const cp=Math.cos(pitchView+bob), sp=Math.sin(pitchView+bob);
+    const cr=Math.cos(roll), sr=Math.sin(roll);
+
+    // pré-rotation de tous les sommets
+    const P = model.V;
+    const RX=new Float32Array(P.length), RY=new Float32Array(P.length), RZ=new Float32Array(P.length);
+    const D=3.4, focal=2.7;
+    const scale = Math.min(cols/2.05, rows/0.98);     // remplit le cadre
+    const cx=cols/2, ccy=rows/2;
+    const yMid=0.17;                                   // centre vertical réel du modèle (dérive haute)
+    const SX=new Float32Array(P.length), SY=new Float32Array(P.length), DEPTH=new Float32Array(P.length);
+    for (let i=0;i<P.length;i++){
+      let x=P[i][0], y=P[i][1]-yMid, z=P[i][2];
+      // yaw (autour de y)
+      let x1=x*cy1+z*sy1, z1=-x*sy1+z*cy1, y1=y;
+      // roll (autour de z)
+      let x2=x1*cr - y1*sr, y2=x1*sr + y1*cr, z2=z1;
+      // pitch (autour de x)
+      let y3=y2*cp - z2*sp, z3=y2*sp + z2*cp, x3=x2;
+      RX[i]=x3; RY[i]=y3; RZ[i]=z3;
+      const p = focal/(D - z3);
+      SX[i]= cx + x3*p*scale;
+      SY[i]= ccy - y3*p*scale*0.5;          // *0.5 : cases plus hautes que larges
+      DEPTH[i]= z3;
+    }
+
+    // lumière fixe en repère caméra (studio : haut-avant-gauche)
+    const L=[-0.40,0.72,0.57]; const Ln=Math.hypot(L[0],L[1],L[2]);
+    L[0]/=Ln; L[1]/=Ln; L[2]/=Ln;
+
+    const edge=(ax,ay,bx,by,px,py)=>(bx-ax)*(py-ay)-(by-ay)*(px-ax);
+
+    for (const f of model.T){
+      const a=f.a,b=f.b,c=f.c;
+      // normale à partir des sommets tournés
+      const ux=RX[b]-RX[a], uy=RY[b]-RY[a], uz=RZ[b]-RZ[a];
+      const vx=RX[c]-RX[a], vy=RY[c]-RY[a], vz=RZ[c]-RZ[a];
+      let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+      const nl=Math.hypot(nx,ny,nz)||1; nx/=nl; ny/=nl; nz/=nl;
+      if (nz<0){ nx=-nx; ny=-ny; nz=-nz; }   // normale tournée vers la caméra
+      let lum = nx*L[0]+ny*L[1]+nz*L[2];
+      lum = 0.16 + 0.84*Math.max(0,lum);     // ambiance + diffus
+      const ci = Math.min(RAMP.length-1, Math.max(1, (lum*(RAMP.length-1))|0));
+      const ch = RAMP[ci];
+
+      // rastérisation barycentrique avec z-buffer
+      const x0=SX[a],y0=SY[a],z0=DEPTH[a];
+      const x1=SX[b],y1=SY[b],z1=DEPTH[b];
+      const x2=SX[c],y2=SY[c],z2=DEPTH[c];
+      const area = edge(x0,y0,x1,y1,x2,y2);
+      if (Math.abs(area)<1e-6) continue;
+      let minX=Math.max(0, Math.floor(Math.min(x0,x1,x2)));
+      let maxX=Math.min(cols-1, Math.ceil(Math.max(x0,x1,x2)));
+      let minY=Math.max(0, Math.floor(Math.min(y0,y1,y2)));
+      let maxY=Math.min(rows-1, Math.ceil(Math.max(y0,y1,y2)));
+      for (let py=minY;py<=maxY;py++){
+        for (let px=minX;px<=maxX;px++){
+          const fx=px+0.5, fy=py+0.5;
+          let w0=edge(x1,y1,x2,y2,fx,fy)/area;
+          let w1=edge(x2,y2,x0,y0,fx,fy)/area;
+          let w2=edge(x0,y0,x1,y1,fx,fy)/area;
+          if (w0<-1e-4||w1<-1e-4||w2<-1e-4) continue;
+          const z = w0*z0+w1*z1+w2*z2;
+          const idx=py*cols+px;
+          if (z>grid.zb[idx]){
+            grid.zb[idx]=z; grid.ch[idx]=ch; grid.mat[idx]=f.m;
+          }
+        }
+      }
+    }
+    return grid;
+  }
+
+  return { RAMP, MAT, makeGrid, render,
+           setSweep:(s)=>{ model=buildModel(s); },
+           model:()=>model };
+}
+if(typeof module!=='undefined') module.exports = Tu160Core;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  TAILLE_CAR: 11,     // taille des caractères en px (plus petit = plus fin)
+  VITESSE: 0.55,      // vitesse de la rotation automatique
+  FLECHE: 0.62,       // flèche des ailes au départ (0 droites .. 1 très en flèche)
+  AUTO: true          // rotation automatique au lancement
+};
+
+/* =================== MISE EN PLACE =================== */
+const core = Tu160Core({ sweep: REGLAGES.FLECHE });
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const capEl = document.getElementById('cap');
+const flecheEl = document.getElementById('fleche');
+
+/* couleurs par matériau (0 corps,1 aile,2 moteur,3 queue,4 verrière) */
+const MATCOL = ['#E8E2D6','#2FD6C6','#8A8079','#E9A23B','#9fe9e0'];
+
+let grid=null, CW=7, CH=12, dpr=1;
+let cols=0, rows=0, stars=[];
+let yaw=0.7, sweep=REGLAGES.FLECHE, auto=REGLAGES.AUTO;
+let zoom=1, dragging=false, lastX=0, lastY=0, vYaw=0;
+
+function dim(){
+  dpr = Math.min(window.devicePixelRatio||1, 2);
+  const rect = cv.getBoundingClientRect();
+  const cssW = Math.max(200, rect.width), cssH = Math.max(160, rect.height);
+  cv.width = Math.round(cssW*dpr); cv.height = Math.round(cssH*dpr);
+  const base = REGLAGES.TAILLE_CAR / zoom;
+  CW = base*0.6; CH = base;
+  cols = Math.max(30, Math.floor(cssW / CW));
+  rows = Math.max(18, Math.floor(cssH / CH));
+  grid = core.makeGrid(cols, rows);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.font = `${base}px ui-monospace, 'SF Mono', monospace`;
+  ctx.textBaseline = 'top';
+  // étoiles de fond
+  stars = [];
+  const n = Math.round(cols*rows*0.02);
+  let s=12345;
+  const rng=()=>{ s|=0; s=(s+0x6D2B79F5)|0; let t=Math.imul(s^(s>>>15),1|s);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; };
+  for (let i=0;i<n;i++) stars.push({x:rng()*cols|0, y:rng()*rows|0, ph:rng()*6.28, sp:0.5+rng()*1.5});
+}
+addEventListener('resize', dim);
+
+let t0=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const t=(now-t0)/1000;
+  if (auto && !dragging) yaw += REGLAGES.VITESSE * 0.016;
+  if (!dragging && Math.abs(vYaw)>0.0001){ yaw += vYaw; vYaw*=0.94; }   // inertie
+
+  core.render(grid, t, { yaw, pitch:0.30 + Math.sin(t*0.5)*0.05 });
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // étoiles scintillantes
+  ctx.fillStyle='rgba(232,226,214,.5)';
+  for (const st of stars){
+    const tw=0.4+0.6*Math.sin(t*st.sp+st.ph);
+    if (tw>0.6){
+      ctx.globalAlpha=tw*0.5;
+      ctx.fillStyle = tw>0.9?'rgba(232,226,214,.8)':'rgba(138,128,121,.6)';
+      ctx.fillText(tw>0.9?'+':'.', st.x*CW, st.y*CH);
+    }
+  }
+  ctx.globalAlpha=1;
+  // l'avion
+  let prevCol=null;
+  for (let y=0;y<rows;y++){
+    for (let x=0;x<cols;x++){
+      const i=y*cols+x;
+      const ch=grid.ch[i];
+      if (ch===' ') continue;
+      const col = MATCOL[grid.mat[i]] || '#E8E2D6';
+      if (col!==prevCol){ ctx.fillStyle=col; prevCol=col; }
+      ctx.fillText(ch, x*CW, y*CH);
+    }
+  }
+  // HUD
+  let deg = Math.round((yaw*180/Math.PI)%360); if(deg<0) deg+=360;
+  capEl.textContent = deg+'°';
+}
+
+/* ---- interactions ---- */
+function pos(e){
+  const r=cv.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:cx-r.left, y:cy-r.top};
+}
+function down(e){ dragging=true; auto=false; const p=pos(e); lastX=p.x; lastY=p.y; vYaw=0; }
+function move(e){
+  if(!dragging) return;
+  const p=pos(e);
+  const dx=p.x-lastX;
+  yaw += dx*0.012;
+  vYaw = dx*0.012;
+  lastX=p.x; lastY=p.y;
+  if(e.cancelable) e.preventDefault();
+}
+function up(){ dragging=false; }
+cv.addEventListener('mousedown', down);
+addEventListener('mousemove', move);
+addEventListener('mouseup', up);
+cv.addEventListener('touchstart', e=>{ down(e); e.preventDefault(); }, {passive:false});
+cv.addEventListener('touchmove', e=>{ move(e); }, {passive:false});
+cv.addEventListener('touchend', up);
+
+cv.addEventListener('wheel', e=>{
+  zoom = Math.max(0.5, Math.min(2.4, zoom * (e.deltaY<0?1.12:0.89)));
+  dim();
+  e.preventDefault();
+}, {passive:false});
+
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if (k==='a'){ auto=!auto; }
+  if (k==='f'){ if(document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }
+  if (k==='w' || k==='arrowup' || k==='arrowdown'){
+    const d = (k==='arrowdown')?-0.12:0.12;
+    sweep = Math.max(0, Math.min(1, sweep + d));
+    core.setSweep(sweep);
+    flecheEl.textContent = Math.round(sweep*100)+'%';
+  }
+});
+addEventListener('fullscreenchange', ()=>setTimeout(dim,60));
+
+dim();
+flecheEl.textContent = Math.round(sweep*100)+'%';
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

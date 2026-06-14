@@ -1,0 +1,422 @@
+<!-- ============================================================
+     NOMBRE D'OR — géométrie sacrée en ASCII · L'arrière-salle
+     Le cycle des figures dorées, toutes reliées par φ = 1,618...
+     et par la spirale logarithmique qui les traverse :
+       cercle d'or -> rectangle d'or -> triangle d'or -> pentagramme
+       -> et retour. Chaque figure se contient elle-même : le
+       cycle infini qui revient à une figure.
+     Calculé en direct, un seul fichier.
+     Double-clic / F : plein écran · clic : figer/reprendre
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nombre d'or — géométrie ASCII · L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{ --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+         --neon:#2FD6C6; --oxblood:#E0392F; --sodium:#E9A23B; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono',monospace;
+    display:flex; flex-direction:column; align-items:center;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+    background-image:
+      radial-gradient(70vw 60vw at 50% -15%, rgba(233,162,59,.07), transparent 60%),
+      radial-gradient(55vw 55vw at 50% 120%, rgba(47,214,198,.05), transparent 60%);
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:999; pointer-events:none;
+    opacity:.2; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hud{ width:min(840px,97vw); display:flex; justify-content:space-between;
+    align-items:flex-end; padding:.6rem 0 .35rem; z-index:5; }
+  .hud .ttl{ font-family:'Press Start 2P',monospace; font-size:.78rem;
+    color:var(--sodium); text-shadow:0 0 12px rgba(233,162,59,.45); }
+  .hud .sub{ font-size:.5rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--smoke); margin-top:.4rem; }
+  .hud .phi{ text-align:right; font-family:'Press Start 2P',monospace; }
+  .hud .phi .sym{ font-size:1.2rem; color:var(--neon); text-shadow:0 0 10px rgba(47,214,198,.5); }
+  .hud .phi .val{ font-size:.5rem; color:var(--smoke); margin-top:.4rem; letter-spacing:.05em; }
+
+  .stage{ position:relative; width:min(840px,97vw); flex:1 1 auto;
+    display:flex; min-height:0; }
+  canvas{ display:block; width:100%; height:100%;
+    border-radius:10px; border:2px solid rgba(232,226,214,.12);
+    background:radial-gradient(130% 100% at 50% 45%, #14110c 0%, #0c0a08 65%, #08070b 100%); }
+
+  .legend{ width:min(840px,97vw); display:flex; gap:.5rem; padding:.45rem 0 .15rem;
+    flex-wrap:wrap; justify-content:center; }
+  .legend .l{ font-size:.55rem; letter-spacing:.05em; text-transform:uppercase; color:var(--smoke);
+    display:flex; align-items:center; gap:.3rem; }
+  .legend .l i{ width:9px; height:9px; border-radius:2px; }
+  .legend .now{ color:var(--sodium); font-weight:700; border:1px solid rgba(233,162,59,.4);
+    border-radius:7px; padding:.2rem .5rem; }
+
+  .hint{ width:min(840px,97vw); text-align:center; color:var(--smoke);
+    font-size:.52rem; letter-spacing:.04em; padding:.3rem 0; }
+</style>
+</head>
+<body>
+
+  <div class="hud">
+    <div>
+      <div class="ttl">NOMBRE D'OR</div>
+      <div class="sub">le cycle des figures · géométrie ascii</div>
+    </div>
+    <div class="phi">
+      <div class="sym">&#966;</div>
+      <div class="val">1,6180339887…</div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv"></canvas>
+  </div>
+
+  <div class="legend">
+    <span class="now" id="now">cercle d'or</span>
+    <span class="l"><i style="background:#E9A23B"></i>figure</span>
+    <span class="l"><i style="background:#2FD6C6"></i>récursion</span>
+    <span class="l"><i style="background:#E0392F"></i>diagonales φ</span>
+    <span class="l"><i style="background:#E8E2D6"></i>spirale</span>
+  </div>
+  <div class="hint">le cycle revient toujours à la première figure · double-clic : plein écran · clic : figer</div>
+
+<script>
+/* ============================================================
+   PHI CORE — géométrie du nombre d'or en ASCII
+   Le cycle des figures dorées, toutes reliées par φ et par la
+   spirale logarithmique qui les traverse :
+     cercle d'or -> rectangle d'or -> triangle d'or -> pentagramme
+     -> (retour au cercle)
+   Chaque figure contient une copie réduite d'elle-même (récursion)
+   et engendre la suivante : le cycle qui revient à une figure.
+   Sortie : une grille { ch, col } rastérisée. Testable en Node.
+   ============================================================ */
+function PhiCore(opts){
+  opts = opts || {};
+  const PHI = (1+Math.sqrt(5))/2;          // 1.618033...
+  const TAU = Math.PI*2;
+
+  /* couleurs (l'arrière-salle) */
+  const COL = {
+    or:'#E9A23B',          // la figure dorée
+    spirale:'#E8E2D6',     // la spirale (fil conducteur)
+    construct:'#2FD6C6',   // subdivisions / construction
+    accent:'#E0392F',      // diagonales / points φ
+    faint:'#8A8079'
+  };
+
+  /* outils trigo rapides */
+  const SIN=new Float32Array(4096);
+  for(let i=0;i<4096;i++) SIN[i]=Math.sin(i/4096*TAU);
+  const K=4096/TAU;
+  const sinT=x=>SIN[((x*K+4194304)|0)&4095];
+  const cosT=x=>sinT(x+TAU/4);
+
+  /* ---------- grille ---------- */
+  function makeGrid(cols, rows){
+    const n=cols*rows;
+    return { cols, rows, ch:new Array(n).fill(' '), col:new Array(n).fill(null) };
+  }
+  function put(g,x,y,ch,col,prio){
+    x|=0; y|=0;
+    if(x<0||y<0||x>=g.cols||y>=g.rows) return;
+    const i=y*g.cols+x;
+    // priorité : la spirale (prio 3) recouvre la figure (2) recouvre la construction (1)
+    const cur=g._prio?g._prio[i]:0;
+    if(prio!=null && cur>prio) return;
+    g.ch[i]=ch; g.col[i]=col;
+    if(g._prio) g._prio[i]=prio||0;
+  }
+
+  /* ---------- mapping monde [-1,1] -> grille ---------- */
+  function mapper(g){
+    const cx=g.cols/2, cy=g.rows/2;
+    const s=Math.min(g.cols*0.46, g.rows*0.92);   // échelle (cases hautes -> *0.5 en y)
+    return {
+      X:(x)=> cx + x*s,
+      Y:(y)=> cy - y*s*0.5,
+      s
+    };
+  }
+
+  /* ---------- rastérisation de segment ---------- */
+  function lineChar(dx,dy){
+    const ax=Math.abs(dx), ay=Math.abs(dy);
+    if(ax>ay*2.2) return '-';
+    if(ay>ax*2.2) return '|';
+    return (dx>0)===(dy>0) ? '\\' : '/';   // y écran vers le bas : pente inversée
+  }
+  function seg(g, M, x0,y0, x1,y1, col, prio, chOverride){
+    const sx0=M.X(x0), sy0=M.Y(y0), sx1=M.X(x1), sy1=M.Y(y1);
+    const dx=sx1-sx0, dy=sy1-sy0;
+    const n=Math.max(1, Math.ceil(Math.max(Math.abs(dx),Math.abs(dy))));
+    const ch=chOverride || lineChar(x1-x0, (y1-y0)*0.5);
+    for(let i=0;i<=n;i++){
+      put(g, sx0+dx*i/n, sy0+dy*i/n, ch, col, prio);
+    }
+  }
+  function poly(g, M, pts, closed, col, prio){
+    for(let i=0;i<pts.length-1;i++) seg(g,M,pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1],col,prio);
+    if(closed && pts.length>1) seg(g,M,pts[pts.length-1][0],pts[pts.length-1][1],pts[0][0],pts[0][1],col,prio);
+  }
+  function rot(p, a){ return [p[0]*cosT(a)-p[1]*sinT(a), p[0]*sinT(a)+p[1]*cosT(a)]; }
+
+  /* ---------- la spirale dorée (fil conducteur) ----------
+     spirale logarithmique : r grandit de φ par quart de tour */
+  function spiralPts(turns, rOuter, phase){
+    const pts=[];
+    const steps=Math.round(turns*64);
+    for(let i=0;i<=steps;i++){
+      const th = (i/steps)*turns*TAU;
+      const r = rOuter * Math.pow(PHI, -2*th/Math.PI);   // décroît vers le centre
+      const a = th + phase;
+      pts.push([Math.cos(a)*r, Math.sin(a)*r]);
+    }
+    return pts;
+  }
+  function drawSpiral(g, M, rot0, alpha){
+    const pts=spiralPts(3.6, 0.92, rot0);
+    for(let i=0;i<pts.length-1;i++){
+      if(alpha<1 && ((i*7)%10)/10 > alpha) continue;     // crossfade dithering
+      seg(g,M,pts[i][0],pts[i][1],pts[i+1][0],pts[i+1][1], COL.spirale, 3, '.');
+    }
+  }
+
+  /* ---------- figure 1 : cercle d'or ----------
+     un cercle + pentagone inscrit (le décagone/pentagone porte φ) */
+  function figCircle(g, M, rot0, depth, alpha){
+    const drawCircle=(R,col,prio)=>{
+      const N=Math.max(24, Math.round(R*M.s*0.9));
+      let prev=null;
+      for(let i=0;i<=N;i++){
+        const a=i/N*TAU + rot0*0.3;
+        const p=[Math.cos(a)*R, Math.sin(a)*R];
+        if(prev && !(alpha<1 && ((i*5)%10)/10>alpha)) seg(g,M,prev[0],prev[1],p[0],p[1],col,prio,'.');
+        prev=p;
+      }
+    };
+    // cercles concentriques en rapport φ (le "cycle" qui se réduit)
+    let R=0.92;
+    for(let d=0; d<depth; d++){
+      drawCircle(R, d===0?COL.or:COL.construct, d===0?2:1);
+      R/=PHI;
+    }
+    // pentagone inscrit (relié au cercle par φ)
+    const pent=[];
+    for(let k=0;k<5;k++){ const a=-TAU/4 + k*TAU/5 + rot0*0.3; pent.push([Math.cos(a)*0.92, Math.sin(a)*0.92]); }
+    if(alpha>0.5) poly(g,M,pent,true,COL.accent,1);
+  }
+
+  /* ---------- figure 2 : rectangle d'or ----------
+     rectangles imbriqués : carré retiré -> rectangle d'or plus petit */
+  function figRect(g, M, rot0, depth, alpha){
+    // boîte de départ : largeur φ, hauteur 1 (normalisée pour tenir dans [-1,1])
+    const h=1.05, w=h*PHI;
+    let x0=-w/2, y0=-h/2, W=w, H=h, dir=0;
+    for(let d=0; d<depth; d++){
+      const col = d===0?COL.or:COL.construct, prio=d===0?2:1;
+      // dessine le rectangle courant (avec rotation globale autour du centre)
+      const corners=[[x0,y0],[x0+W,y0],[x0+W,y0+H],[x0,y0+H]].map(p=>rot([p[0]*0.62,p[1]*0.62], rot0*0.25));
+      poly(g,M,corners,true,col,prio);
+      // retire un carré du côté court -> nouveau rectangle d'or
+      if(W>=H){
+        const sq=H;
+        // carré sur la gauche (dir tourne) ; la ligne de coupe :
+        const cutX=x0+sq;
+        seg(g,M, ...rot([cutX*0.62, y0*0.62],rot0*0.25), ...rot([cutX*0.62,(y0+H)*0.62],rot0*0.25), COL.faint,1);
+        x0=cutX; W=W-sq;
+      } else {
+        const sq=W;
+        const cutY=y0+sq;
+        seg(g,M, ...rot([x0*0.62,cutY*0.62],rot0*0.25), ...rot([(x0+W)*0.62,cutY*0.62],rot0*0.25), COL.faint,1);
+        y0=cutY; H=H-sq;
+      }
+    }
+  }
+
+  /* ---------- figure 3 : triangle d'or ----------
+     triangle isocèle 36-72-72 ; bissectrice -> triangle d'or plus petit */
+  function figTriangle(g, M, rot0, depth, alpha){
+    // sommet en haut, base en bas ; côté/base = φ
+    const A=[0, 0.95];
+    const half=0.95/PHI;                 // demi-base
+    const B=[-half, 0.95-1.45];
+    const Cc=[ half, 0.95-1.45];
+    let tri=[A,B,Cc];
+    for(let d=0; d<depth; d++){
+      const col=d===0?COL.or:COL.construct, prio=d===0?2:1;
+      const r=tri.map(p=>rot([p[0]*0.92,p[1]*0.92], rot0*0.25));
+      poly(g,M,r,true,col,prio);
+      // bissectrice d'un angle de base -> point d'or sur le côté opposé
+      const [P0,P1,P2]=tri;            // P0 apex, P1 gauche, P2 droite
+      // point qui divise P0->P2 selon φ depuis P2
+      const D=[ P2[0] + (P0[0]-P2[0])/PHI, P2[1] + (P0[1]-P2[1])/PHI ];
+      if(d===0){
+        seg(g,M, ...rot([P1[0]*0.92,P1[1]*0.92],rot0*0.25), ...rot([D[0]*0.92,D[1]*0.92],rot0*0.25), COL.accent,1);
+      }
+      // le triangle d'or réduit : sommet D, base P1..P2-ish (récursion en spirale)
+      tri=[D, P2, P1];                 // nouveau triangle d'or (tourne de 36°)
+    }
+  }
+
+  /* ---------- figure 4 : pentagramme ----------
+     pentagone -> pentagramme -> pentagone intérieur (cycle qui revient) */
+  function figPentagram(g, M, rot0, depth, alpha){
+    let R=0.95, phase=-TAU/4 + rot0*0.25, flip=0;
+    for(let d=0; d<depth; d++){
+      const V=[];
+      for(let k=0;k<5;k++){ const a=phase + k*TAU/5; V.push([Math.cos(a)*R, Math.sin(a)*R]); }
+      const colP = d===0?COL.or:COL.construct;
+      // pentagone
+      poly(g,M,V,true,colP, d===0?2:1);
+      // pentagramme (relier un sommet sur deux)
+      const star=[V[0],V[2],V[4],V[1],V[3]];
+      poly(g,M,star,true, d===0?COL.accent:COL.construct, 1);
+      // pentagone intérieur : rayon /φ², tourné de 180° (pointe inversée)
+      R = R/(PHI*PHI);
+      phase += Math.PI + TAU/10;       // inversion + alignement
+    }
+  }
+
+  /* ---------- le cycle ---------- */
+  const SCENES=['cercle','rectangle','triangle','pentagramme'];
+  const SCENE_DUR=4.2;                  // secondes par figure
+  const FADE=1.0;                       // durée du fondu
+  function sceneAt(t){
+    const total=SCENES.length*SCENE_DUR;
+    const tt=((t%total)+total)%total;
+    const idx=Math.floor(tt/SCENE_DUR);
+    const inScene=tt-idx*SCENE_DUR;
+    const fadeOut=inScene > SCENE_DUR-FADE ? (inScene-(SCENE_DUR-FADE))/FADE : 0;
+    return { idx, name:SCENES[idx], next:SCENES[(idx+1)%SCENES.length],
+             fadeOut, inScene };
+  }
+
+  function drawFigure(g, M, name, rot0, depth, alpha){
+    if(name==='cercle')      figCircle(g,M,rot0,depth,alpha);
+    else if(name==='rectangle') figRect(g,M,rot0,depth,alpha);
+    else if(name==='triangle')  figTriangle(g,M,rot0,depth,alpha);
+    else if(name==='pentagramme') figPentagram(g,M,rot0,depth,alpha);
+  }
+
+  function render(grid, t){
+    const g=grid;
+    g.ch.fill(' '); g.col.fill(null);
+    g._prio = g._prio || new Int8Array(g.cols*g.rows);
+    g._prio.fill(0);
+    const M=mapper(g);
+    const rot0 = t*0.25;
+    const sc=sceneAt(t);
+    // profondeur de récursion qui "respire" (le cycle infini)
+    const depth = 4 + Math.round(2+2*sinT(t*0.4));
+
+    // figure courante (s'efface en fin de scène) + suivante (apparaît)
+    if(sc.fadeOut<1) drawFigure(g, M, sc.name, rot0, depth, 1-sc.fadeOut);
+    if(sc.fadeOut>0) drawFigure(g, M, sc.next, rot0, depth, sc.fadeOut);
+
+    // la spirale dorée traverse tout (fil conducteur, toujours présente)
+    drawSpiral(g, M, rot0*1.6, 1);
+
+    return { scene:sc.name, next:sc.next, fade:sc.fadeOut, phi:PHI, depth };
+  }
+
+  return { PHI, COL, SCENES, makeGrid, render, sceneAt,
+           spiralPts, mapper,
+           _figs:{figCircle,figRect,figTriangle,figPentagram} };
+}
+if(typeof module!=='undefined') module.exports = PhiCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  TAILLE_CAR: 12,    // taille des caractères (px) — plus petit = plus fin
+  VITESSE: 1.0       // vitesse du cycle et de la rotation
+};
+
+/* =================== MISE EN PLACE =================== */
+const core = PhiCore();
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const nowEl = document.getElementById('now');
+
+const NOMS = { cercle:"cercle d'or", rectangle:"rectangle d'or",
+               triangle:"triangle d'or", pentagramme:"pentagramme" };
+
+let grid=null, CW=7, CH=12, dpr=1, cols=0, rows=0;
+let figé=false, tVirt=0, last=performance.now();
+
+function dim(){
+  dpr=Math.min(window.devicePixelRatio||1, 2);
+  const r=cv.getBoundingClientRect();
+  const cssW=Math.max(240,r.width), cssH=Math.max(200,r.height);
+  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  const base=REGLAGES.TAILLE_CAR;
+  CW=base*0.6; CH=base;
+  cols=Math.max(40, Math.floor(cssW/CW));
+  rows=Math.max(24, Math.floor(cssH/CH));
+  grid=core.makeGrid(cols, rows);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.font=`${base}px ui-monospace,'SF Mono',monospace`;
+  ctx.textBaseline='top';
+}
+addEventListener('resize', dim);
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt=(now-last)/1000; last=now;
+  if(!figé) tVirt += Math.min(0.1, dt)*REGLAGES.VITESSE;
+
+  const info = core.render(grid, tVirt);
+
+  ctx.clearRect(0,0,cv.width,cv.height);
+  // peinture par couleur (l'espace laisse voir le fond)
+  let prevCol=null;
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      const ch=grid.ch[i];
+      if(ch===' ') continue;
+      const col=grid.col[i]||'#E8E2D6';
+      if(col!==prevCol){ ctx.fillStyle=col; prevCol=col; }
+      ctx.fillText(ch, x*CW, y*CH);
+    }
+  }
+  // libellé de la figure courante (celle qui domine)
+  const dom = info.fade>0.5 ? info.next : info.scene;
+  nowEl.textContent = NOMS[dom] || dom;
+}
+requestAnimationFrame(frame);
+
+/* interactions */
+cv.addEventListener('click', ()=>{ figé=!figé; });
+cv.addEventListener('dblclick', ()=>{
+  if(document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+});
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if(k==='f'){ if(document.fullscreenElement)document.exitFullscreen();
+    else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); }
+  if(k===' '){ figé=!figé; e.preventDefault(); }
+});
+addEventListener('fullscreenchange', ()=>setTimeout(dim,60));
+
+dim();
+</script>
+</body>
+</html>

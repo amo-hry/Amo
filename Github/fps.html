@@ -1,0 +1,722 @@
+<!-- ============================================================
+     LA CAVE — FPS rétro façon 1992 · L'arrière-salle
+     Le secret : c'est un jeu 2D. La carte est une grille, et la
+     "3D" est une illusion : un rayon lancé par colonne d'écran
+     (raycasting, la ruse de Wolfenstein 3D). La mini-carte en
+     haut à droite montre le jeu tel qu'il est vraiment.
+     Moteur testé en simulation puis injecté tel quel.
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>La Cave — FPS · L'arrière-salle</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{ --ink:#0E0A0B; --bone:#E8E2D6; --smoke:#8A8079;
+         --neon:#2FD6C6; --oxblood:#E0392F; --sodium:#E9A23B; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    background:var(--ink); color:var(--bone);
+    font-family:'Space Mono',monospace;
+    display:flex; flex-direction:column; align-items:center;
+    touch-action:none; -webkit-tap-highlight-color:transparent;
+    background-image:
+      radial-gradient(60vw 50vw at 85% -8%, rgba(233,162,59,.08), transparent 60%),
+      radial-gradient(50vw 50vw at -10% 110%, rgba(181,48,42,.08), transparent 60%);
+  }
+  body::after{
+    content:""; position:fixed; inset:0; z-index:999; pointer-events:none;
+    opacity:.3; mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hud{ width:min(560px,96vw); display:flex; justify-content:space-between;
+    align-items:flex-end; padding:.6rem 0 .4rem; }
+  .hud .ttl{ font-family:'Press Start 2P',monospace; font-size:.8rem;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.25); }
+  .hud .sub{ font-size:.52rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--smoke); margin-top:.4rem; }
+  .hud .map2d{ font-family:'Press Start 2P',monospace; font-size:.5rem;
+    background:transparent; color:var(--smoke); border:1px solid rgba(232,226,214,.3);
+    border-radius:6px; padding:.45rem .6rem; cursor:pointer; }
+  .hud .map2d.on{ color:var(--neon); border-color:var(--neon); }
+
+  .stage{ position:relative; width:min(560px,96vw); }
+  canvas{ display:block; width:100%; aspect-ratio:320/200;
+    image-rendering:pixelated; image-rendering:crisp-edges;
+    border-radius:10px; border:2px solid rgba(232,226,214,.13); background:#000;
+    cursor:crosshair; }
+
+  .fire{ position:absolute; right:4%; bottom:6%; width:72px; height:72px;
+    border-radius:50%; display:none; place-items:center; z-index:30;
+    font-family:'Press Start 2P',monospace; font-size:.5rem; color:var(--ink);
+    background:radial-gradient(circle at 35% 30%, #ffd98c, var(--sodium) 60%, #8a4c12);
+    border:2px solid rgba(255,255,255,.25); box-shadow:0 4px 14px rgba(0,0,0,.5);
+    user-select:none; }
+  .fire:active{ transform:scale(.94); }
+  body.touch .fire{ display:grid; }
+
+  .overlay{ position:absolute; inset:0; display:grid; place-items:center;
+    text-align:center; background:rgba(10,7,8,.88); border-radius:10px; padding:1.3rem; z-index:40; }
+  .overlay.hidden{ display:none; }
+  .overlay h2{ font-family:'Press Start 2P',monospace; font-size:1.3rem; line-height:1.4;
+    color:var(--neon); text-shadow:2px 2px 0 rgba(47,214,198,.3); margin-bottom:.8rem; }
+  .overlay h2.dead{ color:var(--oxblood); text-shadow:2px 2px 0 rgba(224,57,47,.3); }
+  .overlay p{ color:var(--smoke); font-size:.68rem; line-height:1.75;
+    margin-bottom:1rem; max-width:40ch; }
+  .overlay p b{ color:var(--bone); }
+  .overlay .ctl{ font-size:.6rem; }
+  button.go{ font-family:'Press Start 2P',monospace; font-size:.66rem; cursor:pointer;
+    background:var(--neon); color:var(--ink); border:none; border-radius:6px;
+    padding:.9rem 1.2rem; }
+  button.go:active{ transform:translateY(1px); }
+
+  .hint{ width:min(560px,96vw); text-align:center; color:var(--smoke);
+    font-size:.55rem; letter-spacing:.05em; padding:.5rem 0; line-height:1.7; }
+  @media (prefers-reduced-motion: reduce){ *{ transition:none!important; } }
+</style>
+</head>
+<body>
+
+  <div class="hud">
+    <div>
+      <div class="ttl">LA CAVE</div>
+      <div class="sub">FPS · et pourtant c'est un jeu 2D</div>
+    </div>
+    <button class="map2d on" id="mapBtn">2D</button>
+  </div>
+
+  <div class="stage">
+    <canvas id="cv" width="320" height="200"></canvas>
+    <div class="fire" id="fireBtn">TIRER</div>
+    <div class="overlay" id="ov">
+      <div>
+        <h2 id="ovT">LA CAVE</h2>
+        <p id="ovP">Les fûts de la cave sont hantés depuis l'inventaire de 1987. Descends. Nettoie les <b>8 fantômes</b>. Les fioles ambrées soignent.</p>
+        <p class="ctl" id="ovC"></p>
+        <button class="go" id="play">Descendre</button>
+      </div>
+    </div>
+  </div>
+  <div class="hint" id="hint"></div>
+
+<script>
+/* ============================================================
+   FPS CORE — le moteur du FPS rétro (raycasting façon 1992)
+   La grande ruse : le monde est une GRILLE 2D. La "3D" n'est
+   qu'une illusion : un rayon lancé par colonne d'écran (DDA).
+   Ce fichier ne touche pas à l'écran : carte, rayons, collisions,
+   fantômes, tirs. Testé en Node PUIS injecté tel quel dans le HTML.
+   ============================================================ */
+function FpsCore(opts){
+  opts = opts || {};
+  const CFG = Object.assign({
+    pv: 100,            // points de vie du joueur
+    ghostHp: 2,         // coups pour tuer un fantôme
+    ghostDmg: 9,        // dégâts d'une griffe de fantôme
+    speed: 2.6,         // vitesse du joueur (cases/s)
+    ghostSpeed: 1.25,   // vitesse des fantômes
+    fireCd: 0.33,       // cadence de tir (s)
+    aggro: 11,          // distance d'éveil des fantômes
+    heal: 30            // soin d'une fiole
+  }, opts);
+
+  /* ---------- la carte (2D, c'est ça le secret) ----------
+     # brique   % pierre   N mur néon   . sol
+     P toi   G fantôme   H fiole de gnôle (soin)            */
+  const MAPSRC = opts.map || [
+    "######################",
+    "#....................#",
+    "#.G......#....##N..G.#",
+    "#..##....#G...###....#",
+    "#..##....#...........#",
+    "#.....G..#...........#",
+    "#.H......#..##...##..#",
+    "#...####....##...##..#",
+    "#...####....##...##..#",
+    "#.....H.....##.....G.#",
+    "#.........P..........#",
+    "#.N#..####.....####..#",
+    "#.##..####.....####..#",
+    "#.##.................#",
+    "#..........#.........#",
+    "#..........#..####...#",
+    "#...##..##.#..N###...#",
+    "#.G.##..##.#.........#",
+    "#...##..........H.##.#",
+    "#............G.....G.#",
+    "#....................#",
+    "######################"
+  ];
+  const H = MAPSRC.length, W = MAPSRC[0].length;
+  const grid = [];
+  const player = { x:0, y:0, dir:0, r:0.22 };
+  const enemies = [], flasks = [];
+  for (let y=0; y<H; y++){
+    grid.push([]);
+    for (let x=0; x<W; x++){
+      const ch = MAPSRC[y][x];
+      grid[y][x] = ch==='#' ? 1 : ch==='%' ? 2 : ch==='N' ? 3 : 0;
+      if (ch==='P'){ player.x = x+0.5; player.y = y+0.5; }
+      if (ch==='G') enemies.push({ x:x+0.5, y:y+0.5, hp:CFG.ghostHp,
+        state:'idle', awake:false, atkCd:0, dieT:0, ph:(x*7+y*13)%6.28 });
+      if (ch==='H') flasks.push({ x:x+0.5, y:y+0.5, taken:false });
+    }
+  }
+
+  const S = {
+    hp: CFG.pv, kills: 0, total: enemies.length,
+    time: 0, over: false, won: false, cool: 0,
+    hurtT: 0, healT: 0, events: []
+  };
+
+  /* ---------- la grille ---------- */
+  function cell(cx, cy){
+    if (cx<0 || cy<0 || cx>=W || cy>=H) return 1;
+    return grid[cy][cx];
+  }
+  function solidAt(x, y){ return cell(Math.floor(x), Math.floor(y)) > 0; }
+  function canStand(x, y, r){
+    return !solidAt(x-r,y-r) && !solidAt(x+r,y-r) &&
+           !solidAt(x-r,y+r) && !solidAt(x+r,y+r);
+  }
+  function move(ent, dx, dy){            // glisse le long des murs
+    const r = ent.r || 0.26;
+    if (canStand(ent.x+dx, ent.y, r)) ent.x += dx;
+    if (canStand(ent.x, ent.y+dy, r)) ent.y += dy;
+  }
+
+  /* ---------- raycasting DDA ----------
+     dirX/dirY NON normalisé (dir+plan) -> dist = distance perpendiculaire (rendu)
+     dirX/dirY normalisé              -> dist = distance euclidienne (visée)  */
+  function castRay(px, py, dirX, dirY){
+    let mapX = Math.floor(px), mapY = Math.floor(py);
+    const dX = Math.abs(dirX) < 1e-9 ? 1e9 : Math.abs(1/dirX);
+    const dY = Math.abs(dirY) < 1e-9 ? 1e9 : Math.abs(1/dirY);
+    let stepX, stepY, sideX, sideY;
+    if (dirX < 0){ stepX=-1; sideX=(px-mapX)*dX; } else { stepX=1; sideX=(mapX+1-px)*dX; }
+    if (dirY < 0){ stepY=-1; sideY=(py-mapY)*dY; } else { stepY=1; sideY=(mapY+1-py)*dY; }
+    let side = 0, type = 1;
+    for (let i=0; i<96; i++){
+      if (sideX < sideY){ sideX += dX; mapX += stepX; side = 0; }
+      else { sideY += dY; mapY += stepY; side = 1; }
+      type = cell(mapX, mapY);
+      if (type > 0) break;
+    }
+    const dist = side===0 ? (mapX - px + (1-stepX)/2) / (dirX||1e-9)
+                          : (mapY - py + (1-stepY)/2) / (dirY||1e-9);
+    let wallX = side===0 ? py + dist*dirY : px + dist*dirX;
+    wallX -= Math.floor(wallX);
+    return { dist: Math.abs(dist), side, type, wallX };
+  }
+  function los(x1, y1, x2, y2){
+    const dx = x2-x1, dy = y2-y1;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-6) return true;
+    const hit = castRay(x1, y1, dx/d, dy/d);
+    return hit.dist > d - 0.12;
+  }
+
+  /* ---------- le tir (hitscan dans le cône de visée) ---------- */
+  function fire(){
+    S.cool = CFG.fireCd;
+    S.events.push({ type:'shoot' });
+    const fx = Math.cos(player.dir), fy = Math.sin(player.dir);
+    const wall = castRay(player.x, player.y, fx, fy).dist;
+    let best = null, bestD = 1e9;
+    for (const e of enemies){
+      if (e.hp <= 0) continue;
+      const dx = e.x-player.x, dy = e.y-player.y;
+      const d = Math.hypot(dx, dy);
+      if (d > bestD || d > wall + 0.35) continue;
+      let a = Math.atan2(dy, dx) - player.dir;
+      a = Math.atan2(Math.sin(a), Math.cos(a));
+      const cone = Math.atan2(0.38, d) + 0.05;
+      if (Math.abs(a) > cone) continue;
+      if (!los(player.x, player.y, e.x, e.y)) continue;
+      best = e; bestD = d;
+    }
+    if (best){
+      best.hp--; best.awake = true;
+      if (best.hp <= 0){
+        best.state = 'dying'; best.dieT = 0.45;
+        S.kills++; S.events.push({ type:'kill' });
+        if (S.kills >= S.total){ S.won = true; S.over = true; S.events.push({ type:'win' }); }
+      } else {
+        best.hurt = 0.15; S.events.push({ type:'hit' });
+      }
+    }
+  }
+
+  /* ---------- les fantômes ---------- */
+  function updateEnemies(dt){
+    for (const e of enemies){
+      if (e.hp <= 0){
+        if (e.state==='dying'){ e.dieT -= dt; if (e.dieT<=0) e.state='dead'; }
+        continue;
+      }
+      if (e.hurt) e.hurt = Math.max(0, e.hurt-dt);
+      e.ph += dt*2.4;
+      const dx = player.x-e.x, dy = player.y-e.y;
+      const d = Math.hypot(dx, dy);
+      if (!e.awake && d < CFG.aggro && los(e.x, e.y, player.x, player.y)) e.awake = true;
+      if (!e.awake) continue;
+      e.state = 'chase';
+      if (d > 0.62){
+        const sp = CFG.ghostSpeed*dt;
+        move(e, (dx/d)*sp + Math.cos(e.ph)*sp*0.25, (dy/d)*sp + Math.sin(e.ph)*sp*0.25);
+      }
+      e.atkCd -= dt;
+      if (d < 0.85 && e.atkCd <= 0){
+        e.atkCd = 1.0;
+        S.hp -= CFG.ghostDmg; S.hurtT = 0.4;
+        S.events.push({ type:'hurt' });
+        if (S.hp <= 0){ S.hp = 0; S.over = true; S.won = false; S.events.push({ type:'lose' }); }
+      }
+    }
+  }
+
+  /* ---------- les fioles ---------- */
+  function updateFlasks(){
+    for (const f of flasks){
+      if (f.taken) continue;
+      if (Math.hypot(f.x-player.x, f.y-player.y) < 0.55 && S.hp < CFG.pv){
+        f.taken = true;
+        S.hp = Math.min(CFG.pv, S.hp + CFG.heal); S.healT = 0.35;
+        S.events.push({ type:'heal' });
+      }
+    }
+  }
+
+  /* ---------- un pas de jeu ---------- */
+  function step(dt, input){
+    if (S.over) return;
+    input = input || {};
+    S.time += dt;
+    if (S.cool > 0) S.cool -= dt;
+    if (S.hurtT > 0) S.hurtT -= dt;
+    if (S.healT > 0) S.healT -= dt;
+
+    player.dir += (input.lookDelta || 0) + (input.turn || 0)*2.6*dt;
+    const fx = Math.cos(player.dir), fy = Math.sin(player.dir);
+    let mx = 0, my = 0;
+    if (input.fw){ mx += fx; my += fy; }
+    if (input.bk){ mx -= fx; my -= fy; }
+    if (input.left){ mx += fy; my -= fx; }     // pas chassé gauche
+    if (input.right){ mx -= fy; my += fx; }
+    if (input.my){ mx += fx*input.my; my += fy*input.my; }       // stick analogique
+    if (input.mx){ mx += fy*input.mx; my -= fx*input.mx; }
+    const ml = Math.hypot(mx, my);
+    if (ml > 0.01) move(player, (mx/ml)*CFG.speed*dt, (my/ml)*CFG.speed*dt);
+    player.moving = ml > 0.01;
+
+    if (input.fire && S.cool <= 0) fire();
+    updateEnemies(dt);
+    updateFlasks();
+  }
+
+  return { S, player, enemies, flasks, W, H, cell, castRay, los, step,
+           canStand, MAPSRC, CFG };
+}
+if (typeof module !== 'undefined') module.exports = FpsCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  PV: 100,              // tes points de vie
+  PV_FANTOME: 2,        // coups pour tuer un fantôme
+  DEGATS: 9,            // dégâts d'une griffe
+  VITESSE: 2.6,         // ta vitesse
+  VITESSE_FANTOME: 1.25,
+  SENSIBILITE: 1.0      // sensibilité souris / tactile
+};
+
+/* =================== MISE EN PLACE =================== */
+const IW=320, IH=200;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const ov = document.getElementById('ov');
+const ovT = document.getElementById('ovT');
+const ovP = document.getElementById('ovP');
+const ovC = document.getElementById('ovC');
+const playBtn = document.getElementById('play');
+const mapBtn = document.getElementById('mapBtn');
+const fireBtn = document.getElementById('fireBtn');
+
+const isTouch = matchMedia('(pointer:coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+ovC.innerHTML = isTouch
+  ? 'pouce <b>gauche</b> : bouger · pouce <b>droit</b> : regarder<br>bouton <b>TIRER</b> (ou petite tape à droite)'
+  : '<b>ZQSD / WASD / flèches</b> : bouger · <b>souris</b> : viser (clique pour verrouiller)<br><b>clic / Espace</b> : tirer · <b>M</b> : mini-carte 2D';
+document.getElementById('hint').textContent = isTouch
+  ? 'pouce gauche bouger · pouce droit regarder · TIRER'
+  : 'ZQSD bouger · souris viser · clic tirer · M carte 2D';
+
+function newCore(){
+  return FpsCore({ pv:REGLAGES.PV, ghostHp:REGLAGES.PV_FANTOME,
+    ghostDmg:REGLAGES.DEGATS, speed:REGLAGES.VITESSE,
+    ghostSpeed:REGLAGES.VITESSE_FANTOME });
+}
+let core = newCore();
+let started=false, minimapOn=true;
+
+/* ---- ciel & sol ---- */
+const skyGrad = ctx.createLinearGradient(0,0,0,IH/2);
+skyGrad.addColorStop(0,'#0a0c12'); skyGrad.addColorStop(1,'#040406');
+const floorGrad = ctx.createLinearGradient(0,IH/2,0,IH);
+floorGrad.addColorStop(0,'#070505'); floorGrad.addColorStop(1,'#1a1210');
+
+/* ---- sprites procéduraux (aucune image externe) ---- */
+function makeGhost(kind){               // 0/1 = animation, 2 = touché
+  const c=document.createElement('canvas'); c.width=32; c.height=40;
+  const g=c.getContext('2d');
+  const halo=g.createRadialGradient(16,17,2,16,18,16);
+  halo.addColorStop(0, kind===2?'rgba(255,255,255,.9)':'rgba(47,214,198,.85)');
+  halo.addColorStop(1,'rgba(47,214,198,0)');
+  g.fillStyle=halo; g.fillRect(0,0,32,40);
+  g.fillStyle = kind===2?'rgba(255,255,255,.95)':'rgba(135,242,230,.9)';
+  g.beginPath();
+  g.moveTo(6,32);
+  g.lineTo(6,16);
+  g.arc(16,16,10,Math.PI,0);
+  g.lineTo(26,32);
+  const off = kind===1 ? 3 : 0;
+  g.lineTo(23,28+off); g.lineTo(20,33-off); g.lineTo(16,28+off);
+  g.lineTo(12,33-off); g.lineTo(9,28+off);
+  g.closePath(); g.fill();
+  g.fillStyle = kind===2?'#9a2a22':'#0a2a28';
+  g.beginPath(); g.ellipse(12,15,2.2,3.4,-.2,0,7); g.fill();
+  g.beginPath(); g.ellipse(20,15,2.2,3.4,.2,0,7); g.fill();
+  g.beginPath(); g.ellipse(16,22,2.6,1.8,0,0,7); g.fill();
+  return c;
+}
+const ghostA=makeGhost(0), ghostB=makeGhost(1), ghostHurt=makeGhost(2);
+const flaskTex=(function(){
+  const c=document.createElement('canvas'); c.width=16; c.height=24;
+  const g=c.getContext('2d');
+  const halo=g.createRadialGradient(8,14,1,8,14,9);
+  halo.addColorStop(0,'rgba(233,162,59,.9)'); halo.addColorStop(1,'rgba(233,162,59,0)');
+  g.fillStyle=halo; g.fillRect(0,0,16,24);
+  g.fillStyle='#5a3a14'; g.fillRect(6,2,4,5);
+  g.fillStyle='rgba(233,162,59,.95)'; g.fillRect(3,7,10,14);
+  g.fillStyle='rgba(255,220,150,.95)'; g.fillRect(4,11,8,9);
+  g.fillStyle='#7a1d18'; g.fillRect(7,13,2,5); g.fillRect(5.5,14.5,5,2);
+  return c;
+})();
+
+/* ---- rendu ---- */
+const zbuf = new Float32Array(IW);
+function draw(){
+  const p=core.player, S=core.S;
+  const fx=Math.cos(p.dir), fy=Math.sin(p.dir);
+  const plx=-fy*0.66, ply=fx*0.66;
+  ctx.fillStyle=skyGrad; ctx.fillRect(0,0,IW,IH/2);
+  ctx.fillStyle=floorGrad; ctx.fillRect(0,IH/2,IW,IH/2);
+
+  for(let x=0;x<IW;x++){
+    const cxm = 2*x/IW-1;
+    const r = core.castRay(p.x,p.y, fx+plx*cxm, fy+ply*cxm);
+    const perp = Math.max(0.02, r.dist);
+    zbuf[x]=perp;
+    const h = IH/perp;
+    let shade = (r.side?0.7:1) * Math.max(0.14, 1-perp/13);
+    let col;
+    if (r.type===3){ shade=Math.max(0.55,shade); col=[47,214,198]; }
+    else if (r.type===2) col=[92,82,88];
+    else col=[150,58,46];
+    if ((r.wallX*6)%1 < 0.07) shade*=0.7;
+    ctx.fillStyle='rgb('+(col[0]*shade|0)+','+(col[1]*shade|0)+','+(col[2]*shade|0)+')';
+    ctx.fillRect(x,(IH-h)/2,1,h);
+  }
+
+  /* sprites triés du plus loin au plus près */
+  const list=[];
+  for(const e of core.enemies){
+    if(e.hp>0 || e.state==='dying') list.push({x:e.x,y:e.y,e,kind:'g'});
+  }
+  for(const f of core.flasks) if(!f.taken) list.push({x:f.x,y:f.y,kind:'h'});
+  for(const s of list) s.d=(s.x-p.x)*(s.x-p.x)+(s.y-p.y)*(s.y-p.y);
+  list.sort((a,b)=>b.d-a.d);
+  const invDet = 1/(plx*fy - fx*ply);
+  const now = performance.now();
+  for(const s of list){
+    const rx=s.x-p.x, ry=s.y-p.y;
+    const tx = invDet*(fy*rx - fx*ry);
+    const ty = invDet*(-ply*rx + plx*ry);
+    if (ty<=0.08) continue;
+    const scx = (IW/2)*(1+tx/ty);
+    const size = Math.abs(IH/ty);
+    let alpha = Math.max(0.12, Math.min(1, 1.35 - ty/12));
+    if (s.kind==='g'){
+      const e=s.e;
+      let tex = e.hurt>0 ? ghostHurt : ((Math.floor(now/220+e.ph*3)%2)?ghostB:ghostA);
+      let sz = size*0.85;
+      if (e.state==='dying'){ const k=1-e.dieT/0.45; sz*=1+k*0.7; alpha*=Math.max(0,e.dieT/0.45); }
+      const top = IH/2 - sz*0.55 + Math.sin(now/300+e.ph)*size*0.03;
+      blit(tex, scx, top, sz, ty, alpha);
+    } else {
+      const sz = size*0.36;
+      const top = IH/2 + size*0.16 - sz + Math.sin(now/350)*size*0.02;
+      blit(flaskTex, scx, top, sz, ty, alpha);
+    }
+  }
+
+  drawWeapon();
+  /* viseur */
+  ctx.strokeStyle='rgba(47,214,198,.9)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(IW/2-6,IH/2); ctx.lineTo(IW/2-2,IH/2);
+  ctx.moveTo(IW/2+2,IH/2); ctx.lineTo(IW/2+6,IH/2);
+  ctx.moveTo(IW/2,IH/2-6); ctx.lineTo(IW/2,IH/2-2);
+  ctx.moveTo(IW/2,IH/2+2); ctx.lineTo(IW/2,IH/2+6);
+  ctx.stroke();
+
+  drawHudCanvas();
+  if (minimapOn) drawMinimap();
+
+  if (S.hurtT>0){ ctx.fillStyle='rgba(224,57,47,'+(S.hurtT*0.5)+')'; ctx.fillRect(0,0,IW,IH); }
+  if (S.healT>0){ ctx.fillStyle='rgba(47,214,198,'+(S.healT*0.35)+')'; ctx.fillRect(0,0,IW,IH); }
+}
+function blit(tex, cx, top, sz, depth, alpha){
+  const x0 = Math.floor(cx - sz/2);
+  const xa = Math.max(0,x0), xb = Math.min(IW, Math.ceil(x0+sz));
+  ctx.globalAlpha = alpha;
+  for(let x=xa; x<xb; x++){
+    if (depth >= zbuf[x]) continue;
+    const u = Math.floor((x-x0)/sz * tex.width);
+    ctx.drawImage(tex, u, 0, 1, tex.height, x, top, 1, sz);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawWeapon(){
+  const S=core.S, t=performance.now()/1000;
+  const mv = core.player.moving;
+  const bx = Math.sin(t*6.4)*(mv?4:1.2);
+  const by = Math.abs(Math.cos(t*6.4))*(mv?3:1);
+  const rec = S.cool>0.24 ? (S.cool-0.24)*70 : 0;
+  const x = IW/2+12+bx, y = IH-34+by+rec;
+  ctx.fillStyle='#15110f'; ctx.fillRect(x-8,y+6,20,28);
+  ctx.fillStyle='#241d22'; ctx.fillRect(x-6,y,16,10);
+  ctx.fillStyle='#0d4a45'; ctx.fillRect(x-2,y-9,8,11);
+  ctx.fillStyle='#2FD6C6'; ctx.fillRect(x-1,y-12,6,4);
+  if (S.cool > core.CFG.fireCd-0.07){
+    const fg=ctx.createRadialGradient(x+2,y-14,1,x+2,y-14,15);
+    fg.addColorStop(0,'rgba(255,255,215,.95)');
+    fg.addColorStop(.4,'rgba(47,214,198,.7)');
+    fg.addColorStop(1,'rgba(47,214,198,0)');
+    ctx.fillStyle=fg; ctx.fillRect(x-14,y-30,34,30);
+  }
+}
+function drawHudCanvas(){
+  const S=core.S;
+  ctx.font='7px "Press Start 2P",monospace';
+  ctx.textBaseline='top';
+  ctx.fillStyle='rgba(232,226,214,.85)';
+  ctx.fillText('FANTOMES '+(S.total-S.kills)+'/'+S.total, 6, 6);
+  const mm=Math.floor(S.time/60), ss=Math.floor(S.time%60);
+  ctx.fillStyle='rgba(138,128,121,.9)';
+  ctx.fillText((mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss, 6, 17);
+  /* barre de PV */
+  const w=70, hpw=Math.max(0, S.hp/core.CFG.pv*w);
+  ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillRect(5,IH-16,w+4,11);
+  ctx.fillStyle = S.hp>60?'#2FD6C6':S.hp>30?'#E9A23B':'#E0392F';
+  ctx.fillRect(7,IH-14,hpw,7);
+  ctx.fillStyle='rgba(232,226,214,.85)';
+  ctx.fillText('PV', 7, IH-26);
+}
+function drawMinimap(){
+  const sc=3.2, mw=core.W*sc, mh=core.H*sc, x0=IW-mw-5, y0=5;
+  ctx.globalAlpha=.88;
+  ctx.fillStyle='rgba(6,5,7,.85)'; ctx.fillRect(x0-2,y0-2,mw+4,mh+4);
+  for(let y=0;y<core.H;y++) for(let x=0;x<core.W;x++){
+    const t=core.cell(x,y);
+    if(!t) continue;
+    ctx.fillStyle = t===3?'#2FD6C6':t===2?'#403a44':'#5a2a24';
+    ctx.fillRect(x0+x*sc, y0+y*sc, sc, sc);
+  }
+  for(const f of core.flasks) if(!f.taken){
+    ctx.fillStyle='#E9A23B'; ctx.fillRect(x0+f.x*sc-1, y0+f.y*sc-1, 2.4, 2.4);
+  }
+  for(const e of core.enemies) if(e.hp>0){
+    ctx.fillStyle = e.awake?'#E0392F':'#7a6a72';
+    ctx.fillRect(x0+e.x*sc-1.2, y0+e.y*sc-1.2, 2.6, 2.6);
+  }
+  const p=core.player;
+  ctx.strokeStyle='rgba(47,214,198,.5)'; ctx.lineWidth=1;
+  for(const a of [-0.58,0.58]){
+    ctx.beginPath(); ctx.moveTo(x0+p.x*sc, y0+p.y*sc);
+    ctx.lineTo(x0+(p.x+Math.cos(p.dir+a)*3.4)*sc, y0+(p.y+Math.sin(p.dir+a)*3.4)*sc);
+    ctx.stroke();
+  }
+  ctx.fillStyle='#2FD6C6';
+  ctx.fillRect(x0+p.x*sc-1.5, y0+p.y*sc-1.5, 3, 3);
+  ctx.globalAlpha=1;
+  ctx.font='5px "Press Start 2P",monospace';
+  ctx.fillStyle='rgba(138,128,121,.9)';
+  ctx.fillText('LE JEU EN VRAI (2D)', x0-12, y0+mh+5);
+}
+
+/* ---- sons (synthèse, rien d'externe) ---- */
+let AC=null;
+function audioInit(){
+  if (AC){ if(AC.state==='suspended') AC.resume(); return; }
+  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+}
+function snd(f,d,type,g,slide){
+  if(!AC) return;
+  const t=AC.currentTime, o=AC.createOscillator(), v=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(f,t);
+  if(slide) o.frequency.exponentialRampToValueAtTime(slide,t+d);
+  v.gain.setValueAtTime(g,t); v.gain.exponentialRampToValueAtTime(0.0001,t+d);
+  o.connect(v); v.connect(AC.destination); o.start(t); o.stop(t+d+0.02);
+}
+function consumeEvents(){
+  for(const ev of core.S.events.splice(0)){
+    if(ev.type==='shoot') snd(1100,.06,'square',.04,260);
+    else if(ev.type==='hit') snd(300,.05,'square',.06);
+    else if(ev.type==='kill') snd(640,.38,'sawtooth',.055,70);
+    else if(ev.type==='hurt') snd(120,.16,'triangle',.12,70);
+    else if(ev.type==='heal'){ snd(520,.08,'sine',.06); setTimeout(()=>snd(780,.1,'sine',.05),90); }
+    else if(ev.type==='win'){ [520,660,880,1100].forEach((f,i)=>setTimeout(()=>snd(f,.14,'square',.05),i*110)); setTimeout(showEnd,700); }
+    else if(ev.type==='lose'){ snd(220,.5,'sawtooth',.07,55); setTimeout(showEnd,700); }
+  }
+}
+function showEnd(){
+  const S=core.S;
+  document.exitPointerLock && document.exitPointerLock();
+  if (S.won){
+    ovT.textContent='CAVE NETTOYEE'; ovT.className='';
+    const mm=Math.floor(S.time/60), ss=Math.floor(S.time%60);
+    ovP.innerHTML='Les 8 fantômes sont retournés dans leurs fûts.<br>Temps : <b>'+
+      (mm<10?'0':'')+mm+':'+(ss<10?'0':'')+ss+'</b> · PV restants : <b>'+S.hp+'</b>';
+  } else {
+    ovT.textContent='T\'ES REMONTE EN COURANT'; ovT.className='dead';
+    ovP.innerHTML='La cave t\'a eu. Fantômes nettoyés : <b>'+S.kills+'/'+S.total+'</b>';
+  }
+  ovC.textContent='';
+  playBtn.textContent='Redescendre';
+  ov.classList.remove('hidden');
+}
+
+/* ---- entrées ---- */
+const input={fw:false,bk:false,left:false,right:false,turn:0,fire:false,mx:0,my:0};
+let pendingLook=0, fireOnce=false;
+
+addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['z','w','arrowup'].includes(k)){ input.fw=true; e.preventDefault(); }
+  if(['s','arrowdown'].includes(k)){ input.bk=true; e.preventDefault(); }
+  if(['q','a'].includes(k)) input.left=true;
+  if(k==='d') input.right=true;
+  if(k==='arrowleft'){ input.turn=-1; e.preventDefault(); }
+  if(k==='arrowright'){ input.turn=1; e.preventDefault(); }
+  if(k===' '){ input.fire=true; audioInit(); e.preventDefault(); }
+  if(k==='m'){ minimapOn=!minimapOn; mapBtn.classList.toggle('on',minimapOn); }
+});
+addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(['z','w','arrowup'].includes(k)) input.fw=false;
+  if(['s','arrowdown'].includes(k)) input.bk=false;
+  if(['q','a'].includes(k)) input.left=false;
+  if(k==='d') input.right=false;
+  if(k==='arrowleft'&&input.turn<0) input.turn=0;
+  if(k==='arrowright'&&input.turn>0) input.turn=0;
+  if(k===' ') input.fire=false;
+});
+mapBtn.addEventListener('click',()=>{ minimapOn=!minimapOn; mapBtn.classList.toggle('on',minimapOn); });
+
+/* souris : verrouillage du pointeur */
+cv.addEventListener('click',()=>{
+  if(!started || isTouch) return;
+  if(document.pointerLockElement!==cv) cv.requestPointerLock();
+});
+addEventListener('mousemove',e=>{
+  if(document.pointerLockElement===cv)
+    pendingLook += e.movementX*0.0026*REGLAGES.SENSIBILITE;
+});
+addEventListener('mousedown',e=>{
+  if(document.pointerLockElement===cv){ input.fire=true; audioInit(); }
+});
+addEventListener('mouseup',()=>{ if(!isTouch) input.fire=false; });
+
+/* tactile : stick gauche + regard droit + bouton TIRER */
+let stickId=null, stickX=0, stickY=0, lookId=null, lookX=0, lookT=0, lookMoved=0;
+cv.addEventListener('touchstart',e=>{
+  audioInit();
+  const r=cv.getBoundingClientRect();
+  for(const t of e.changedTouches){
+    const x=t.clientX-r.left;
+    if(x < r.width/2 && stickId===null){ stickId=t.identifier; stickX=t.clientX; stickY=t.clientY; }
+    else if(lookId===null){ lookId=t.identifier; lookX=t.clientX; lookT=performance.now(); lookMoved=0; }
+  }
+  e.preventDefault();
+},{passive:false});
+cv.addEventListener('touchmove',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier===stickId){
+      const dx=(t.clientX-stickX)/42, dy=(t.clientY-stickY)/42;
+      input.mx=Math.max(-1,Math.min(1,dx));
+      input.my=Math.max(-1,Math.min(1,-dy));
+    } else if(t.identifier===lookId){
+      const dx=t.clientX-lookX; lookX=t.clientX;
+      lookMoved+=Math.abs(dx);
+      pendingLook += dx*0.0075*REGLAGES.SENSIBILITE;
+    }
+  }
+  e.preventDefault();
+},{passive:false});
+cv.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier===stickId){ stickId=null; input.mx=0; input.my=0; }
+    else if(t.identifier===lookId){
+      if(performance.now()-lookT<200 && lookMoved<12) fireOnce=true;
+      lookId=null;
+    }
+  }
+  e.preventDefault();
+},{passive:false});
+fireBtn.addEventListener('touchstart',e=>{ input.fire=true; audioInit(); e.preventDefault(); e.stopPropagation(); },{passive:false});
+fireBtn.addEventListener('touchend',e=>{ input.fire=false; e.preventDefault(); e.stopPropagation(); },{passive:false});
+
+/* ---- boucle à pas fixe ---- */
+let last=performance.now(), acc=0;
+function frame(now){
+  let dt=now-last; last=now; if(dt>100) dt=100;
+  acc+=dt; let n=0;
+  while(acc>=16.666 && n<4){
+    if(started && !core.S.over){
+      const inp=Object.assign({},input);
+      inp.lookDelta=pendingLook; pendingLook=0;
+      if(fireOnce){ inp.fire=true; fireOnce=false; }
+      core.step(0.016666, inp);
+      consumeEvents();
+    }
+    acc-=16.666; n++;
+  }
+  if(n===4) acc=0;
+  draw();
+  requestAnimationFrame(frame);
+}
+
+playBtn.addEventListener('click',()=>{
+  audioInit();
+  core = newCore();
+  started=true;
+  ov.classList.add('hidden');
+  if(!isTouch) cv.requestPointerLock && cv.requestPointerLock();
+});
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

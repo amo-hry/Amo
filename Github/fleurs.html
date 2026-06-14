@@ -1,0 +1,336 @@
+<!-- ============================================================
+     FLEURS — jardin ASCII qui bouge · L'arrière-salle
+     Un jardin au crépuscule, tout en caractères : des fleurs qui
+     se balancent au vent, des corolles qui s'ouvrent et se
+     referment, de l'herbe qui ondule, des pétales qui dérivent,
+     des lucioles qui clignotent. Calculé en direct.
+     Double-clic / F : plein écran · clic : un coup de vent
+     À régler en premier :  <<< CHANGE ICI  (dans le script)
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleurs — jardin ASCII · L'arrière-salle</title>
+<style>
+  html,body{ height:100%; margin:0; overflow:hidden; background:#241640; }
+  #cv{ display:block; width:100vw; height:100vh; background:#241640; }
+  #aide{
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+    font-family:ui-monospace,'Courier New',monospace; font-size:12px;
+    color:rgba(232,226,214,.6); background:rgba(20,12,30,.5);
+    padding:7px 14px; border-radius:8px; letter-spacing:.05em;
+    pointer-events:none; transition:opacity 1.2s ease; z-index:10;
+    border:1px solid rgba(232,226,214,.14);
+  }
+  #aide.parti{ opacity:0; }
+</style>
+</head>
+<body>
+  <canvas id="cv"></canvas>
+  <div id="aide">double-clic : plein écran · clic : un coup de vent · espace : autre jardin</div>
+
+<script>
+/* ============================================================
+   FLEURS CORE — jardin de fleurs ASCII qui bougent
+   Un jardin au crépuscule : des fleurs qui se balancent au vent
+   (tiges qui ploient, corolles qui s'ouvrent et se referment),
+   de l'herbe qui ondule, des pétales qui dérivent, des lucioles
+   qui clignotent, des étoiles et la lune. Très coloré.
+   Sortie : grille { ch, col }. Tout est testable en Node.
+   ============================================================ */
+function FleursCore(opts){
+  opts = opts || {};
+
+  /* ---------- palette colorée ---------- */
+  const COL = {
+    ciel:['#241640','#3a2360','#5a3070','#7a3a6a','#9a4860'],   // crépuscule
+    etoile:'#FFFFFF', lune:'#F0E8C0', luneOmbre:'#5a3070',
+    // fleurs (corolles) — variées et vives
+    petale:['#E0729F','#E0392F','#F0C850','#2FD6C6','#B080E0','#E8E2D6','#FF8FB0'],
+    coeur:['#E9A23B','#B5302A','#8a5a20','#F0C850'],
+    tige:'#3a8a4a', tigeOmbre:'#2a6a36', feuille:'#4aaa4a',
+    herbe:['#3a8a3a','#4aaa4a','#2a6a2a'],
+    sol:'#2a1d14', solClair:'#3a2a1a',
+    luciole:'#F5E060', lucioleVive:'#FFFFA0',
+    petaleVol:['#E0729F','#F0C850','#B080E0','#FF8FB0']
+  };
+
+  /* ---------- outils ---------- */
+  function mulberry32(seed){
+    let a=seed>>>0;
+    return function(){ a|=0; a=(a+0x6D2B79F5)|0;
+      let t=Math.imul(a^(a>>>15),1|a); t=(t+Math.imul(t^(t>>>7),61|t))^t;
+      return ((t^(t>>>14))>>>0)/4294967296; };
+  }
+  const SIN=new Float32Array(2048);
+  for(let i=0;i<2048;i++) SIN[i]=Math.sin(i/2048*Math.PI*2);
+  const K=2048/(Math.PI*2);
+  const sinT=x=>SIN[((x*K+2097152)|0)&2047];
+  const cosT=x=>sinT(x+Math.PI/2);
+
+  /* ---------- grille ---------- */
+  function makeGrid(cols, rows){
+    const n=cols*rows;
+    return { cols, rows, ch:new Array(n).fill(' '), col:new Array(n).fill(null) };
+  }
+  function put(g,x,y,ch,col){
+    x|=0; y|=0;
+    if(x<0||y<0||x>=g.cols||y>=g.rows) return;
+    const i=y*g.cols+x; g.ch[i]=ch; g.col[i]=col;
+  }
+  function get(g,x,y){ if(x<0||y<0||x>=g.cols||y>=g.rows) return ' '; return g.ch[y*g.cols+x]; }
+
+  /* ---------- composition de la scène ---------- */
+  function makeScene(cols, rows, seed){
+    cols=Math.max(30,Math.min(400,cols|0));
+    rows=Math.max(20,Math.min(200,rows|0));
+    const rng=mulberry32(seed||7);
+    const sol = Math.round(rows*0.80);          // ligne de sol
+
+    // fleurs réparties sur la largeur
+    const fleurs=[];
+    const N=Math.max(4, Math.round(cols/8));
+    const used=[];
+    for(let i=0;i<N;i++){
+      let x, tries=0;
+      do{ x=2+rng()*(cols-4); tries++; }
+      while(tries<20 && used.some(u=>Math.abs(u-x)<cols*0.05));
+      used.push(x);
+      const grand=rng();
+      fleurs.push({
+        x:x|0,
+        baseY: sol-1 + (rng()*2|0),
+        haut: Math.round(rows*(0.20 + grand*0.34)),     // hauteur de tige
+        rayon: 1.6 + rng()*1.6,                         // taille corolle
+        petales: 5 + (rng()*4|0),                       // nb de pétales
+        teinte: (rng()*COL.petale.length)|0,
+        coeur: (rng()*COL.coeur.length)|0,
+        swayPh: rng()*6.28, swayAmp: 0.6+rng()*1.0,     // balancement
+        bloomPh: rng()*6.28, bloomFr: 0.5+rng()*0.7,    // ouverture/fermeture
+        rot: rng()*6.28, rotSp:(rng()*2-1)*0.3          // légère rotation
+      });
+    }
+    fleurs.sort((a,b)=>a.baseY-b.baseY);                // les plus hautes derrière
+
+    // herbe
+    const herbe=[];
+    for(let x=0;x<cols;x++) herbe.push({x, ph:rng()*6.28, h:1+(rng()*2|0)});
+
+    // lucioles
+    const lucioles=[];
+    for(let i=0;i<Math.max(3,Math.round(cols/12));i++)
+      lucioles.push({ x:rng()*cols, y:rng()*sol*0.85, ph:rng()*6.28,
+        sp:0.4+rng()*0.8, dx:(rng()*2-1)*0.4, dy:(rng()*2-1)*0.25,
+        blink:0.6+rng()*1.4 });
+
+    // pétales qui dérivent (calculés depuis t, déterministes)
+    const petales=[];
+    for(let i=0;i<Math.max(4,Math.round(cols/14));i++)
+      petales.push({ x0:rng()*cols, ph:rng()*100, sp:1.2+rng()*1.4,
+        drift:0.6+rng()*1.2, teinte:(rng()*COL.petaleVol.length)|0,
+        ch:['*','o',',','.','`'][(rng()*5)|0] });
+
+    // étoiles + lune
+    const etoiles=[];
+    for(let i=0;i<Math.round(cols*rows*0.012);i++)
+      etoiles.push({x:rng()*cols|0, y:rng()*sol*0.55|0, ph:rng()*6.28, sp:0.5+rng()*1.5});
+    const lune={ x:Math.round(cols*0.80), y:Math.round(rows*0.16),
+                 r:Math.max(2,Math.round(Math.min(cols,rows*2)*0.04)) };
+
+    return { cols, rows, sol, fleurs, herbe, lucioles, petales, etoiles, lune };
+  }
+
+  /* ---------- une fleur ---------- */
+  function drawFleur(g, fl, t, wind){
+    const sway = (sinT(t*0.6 + fl.swayPh) + wind*0.7) * fl.swayAmp;
+    const topY = fl.baseY - fl.haut;
+    // tige (ploie : décalage croissant vers le sommet)
+    for(let k=0;k<fl.haut;k++){
+      const y=fl.baseY-k;
+      const frac=k/fl.haut;
+      const bend=Math.round(sway*frac*frac*2.2);
+      const ch = frac>0.85 ? '|' : (Math.abs(sway)>1.2 ? (sway>0?'/':'\\') : '|');
+      put(g, fl.x+bend, y, ch, frac>0.5?COL.tige:COL.tigeOmbre);
+      // feuilles
+      if(k===Math.floor(fl.haut*0.4)) put(g, fl.x+bend-1, y, '<', COL.feuille);
+      if(k===Math.floor(fl.haut*0.6)) put(g, fl.x+bend+1, y, '>', COL.feuille);
+    }
+    // corolle au sommet (suit le balancement)
+    const swayTop=Math.round(sway*2.2);
+    const cx=fl.x+swayTop, cy=topY;
+    // ouverture qui respire (bourgeon -> fleur)
+    const bloom = 0.55 + 0.45*(0.5+0.5*sinT(t*fl.bloomFr + fl.bloomPh));
+    const r = fl.rayon * bloom;
+    const rotation = fl.rot + t*fl.rotSp;
+    const pcol = COL.petale[fl.teinte];
+    // pétales
+    for(let p=0;p<fl.petales;p++){
+      const a = rotation + p/fl.petales*Math.PI*2;
+      const px = cx + cosT(a)*r;
+      const py = cy + sinT(a)*r*0.6;            // *0.6 : cases plus hautes que larges
+      // caractère du pétale selon l'angle
+      const ax=Math.abs(cosT(a)), ay=Math.abs(sinT(a))*0.6;
+      let ch;
+      if(r<1.2) ch='*';
+      else if(ax>ay*2) ch='-';
+      else if(ay>ax*2) ch='|';
+      else ch = (cosT(a)*sinT(a)>0)?'\\':'/';
+      put(g, px, py, ch, pcol);
+      // pétale plus charnu pour les grandes fleurs (2e point à mi-rayon)
+      if(fl.rayon>2.2 && r>1.6){
+        put(g, cx+cosT(a)*r*0.55, cy+sinT(a)*r*0.55*0.6, 'o', pcol);
+      }
+    }
+    // coeur
+    put(g, cx, cy, r>1.3?'@':'o', COL.coeur[fl.coeur]);
+  }
+
+  /* ---------- rendu complet ---------- */
+  function render(scene, grid, t){
+    const g=grid, S=scene, cols=S.cols, rows=S.rows, sol=S.sol;
+    g.ch.fill(' '); g.col.fill(null);
+    const wind = sinT(t*0.25)*0.5 + sinT(t*0.62+1)*0.3;
+
+    /* ciel crépuscule */
+    for(let y=0;y<sol;y++){
+      const u=y/sol;
+      const ci=Math.min(COL.ciel.length-1, Math.floor(u*COL.ciel.length));
+      const c=COL.ciel[ci];
+      for(let x=0;x<cols;x++){ const i=y*cols+x; g.ch[i]=' '; g.col[i]=c; }
+    }
+    /* étoiles */
+    for(const s of S.etoiles){
+      const tw=0.5+0.5*sinT(t*s.sp+s.ph);
+      if(tw>0.6 && s.y<sol*0.6) put(g,s.x,s.y, tw>0.86?'*':(tw>0.72?'+':'.'), COL.etoile);
+    }
+    /* lune (croissant) */
+    const L=S.lune;
+    for(let dy=-L.r;dy<=L.r;dy++) for(let dx=-L.r;dx<=L.r;dx++){
+      const d=Math.sqrt(dx*dx+(dy*2)*(dy*2));
+      if(d<=L.r){
+        const d2=Math.sqrt((dx+L.r*0.6)*(dx+L.r*0.6)+(dy*2)*(dy*2));
+        put(g,L.x+dx,L.y+dy, d2>L.r*0.9?'@':' ', d2>L.r*0.9?COL.lune:COL.luneOmbre);
+      }
+    }
+
+    /* sol */
+    for(let y=sol;y<rows;y++) for(let x=0;x<cols;x++){
+      const n=(x*5+y*7)%9;
+      put(g,x,y, n<2?'.':(n<3?',':' '), (x+y)%2?COL.sol:COL.solClair);
+    }
+
+    /* herbe qui ondule (derrière les fleurs) */
+    for(const bl of S.herbe){
+      const sway=sinT(bl.x*0.4 + t*1.6 + bl.ph)*0.5 + wind;
+      for(let k=0;k<bl.h;k++){
+        const bend=Math.round(sway*(k+1)*0.6);
+        put(g, bl.x+bend, sol-1-k, sway>0.3?(k?'/':'v'):(sway<-0.3?'\\':'|'), COL.herbe[(bl.x+k)%3]);
+      }
+    }
+
+    /* pétales qui dérivent (chute + balancement, déterministe en t) */
+    for(const pt of S.petales){
+      const fall=(t*pt.sp + pt.ph);
+      const range=sol*0.7;
+      const y=(fall % range);                              // descend en boucle
+      const x=pt.x0 + sinT(fall*0.8)*pt.drift*3;
+      if(y>2 && y<sol-1) put(g, Math.round(x), Math.round(y+rows*0.08), pt.ch, COL.petaleVol[pt.teinte]);
+    }
+
+    /* les fleurs (de l'arrière vers l'avant) */
+    for(const fl of S.fleurs) drawFleur(g, fl, t, wind);
+
+    /* lucioles (clignotent et dérivent) */
+    for(const lc of S.lucioles){
+      const x=((lc.x + sinT(t*0.3+lc.ph)*8 + t*lc.dx*4)%cols+cols)%cols;
+      const y=lc.y + sinT(t*lc.sp+lc.ph)*3 + cosT(t*0.4+lc.ph)*2;
+      const tw=0.5+0.5*sinT(t*lc.blink+lc.ph);
+      if(tw>0.5 && y<sol-1){
+        put(g, Math.round(x), Math.round(y), tw>0.85?'*':'.', tw>0.85?COL.lucioleVive:COL.luciole);
+      }
+    }
+
+    return g;
+  }
+
+  return { COL, makeScene, makeGrid, render, sinT };
+}
+if(typeof module!=='undefined') module.exports = FleursCore;
+
+</script>
+<script>
+/* =================== RÉGLAGES ===================   <<< CHANGE ICI */
+const REGLAGES = {
+  TAILLE_CAR: 12,    // taille des caractères (px) — plus petit = plus de fleurs
+  VITESSE: 1.0,      // vitesse de l'animation
+  GRAINE: 42         // change ce nombre = autre disposition de fleurs
+};
+
+/* =================== MISE EN PLACE =================== */
+const core = FleursCore();
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const aide = document.getElementById('aide');
+
+let scene=null, grid=null, CW=7, CH=12, dpr=1, cols=0, rows=0;
+let graine=REGLAGES.GRAINE, coupVent=0;
+
+function dim(){
+  dpr=Math.min(window.devicePixelRatio||1, 2);
+  const cssW=window.innerWidth, cssH=window.innerHeight;
+  cv.width=Math.round(cssW*dpr); cv.height=Math.round(cssH*dpr);
+  const base=REGLAGES.TAILLE_CAR;
+  CW=base*0.6; CH=base;
+  cols=Math.max(30, Math.floor(cssW/CW));
+  rows=Math.max(20, Math.floor(cssH/CH));
+  scene=core.makeScene(cols, rows, graine);
+  grid=core.makeGrid(cols, rows);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.font=`${base}px ui-monospace,'SF Mono',monospace`;
+  ctx.textBaseline='top';
+  // dégradé de ciel en fond CSS (transparaît dans les cases vides)
+  cv.style.background='linear-gradient(180deg,#241640 0%,#3a2360 30%,#5a3070 52%,#7a3a6a 68%,#2a1d14 80%,#2a1d14 100%)';
+}
+addEventListener('resize', dim);
+
+let t0=performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let t=(now-t0)/1000 * REGLAGES.VITESSE;
+  if(coupVent>0){ t+=coupVent; coupVent=Math.max(0, coupVent-0.016*2); }
+  core.render(scene, grid, t);
+  ctx.clearRect(0,0,cv.width,cv.height);
+  let prev=null;
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      const ch=grid.ch[i];
+      if(ch===' ' || !grid.col[i]) continue;
+      if(grid.col[i]!==prev){ ctx.fillStyle=grid.col[i]; prev=grid.col[i]; }
+      ctx.fillText(ch, x*CW, y*CH);
+    }
+  }
+}
+
+/* interactions */
+let aideTimer=setTimeout(()=>aide.classList.add('parti'),5000);
+function reAide(){ aide.classList.remove('parti'); clearTimeout(aideTimer);
+  aideTimer=setTimeout(()=>aide.classList.add('parti'),3000); }
+cv.addEventListener('click', ()=>{ coupVent+=1.4; reAide(); });
+cv.addEventListener('dblclick', ()=>{ if(document.fullscreenElement)document.exitFullscreen();
+  else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); });
+addEventListener('keydown', e=>{
+  const k=e.key.toLowerCase();
+  if(k==='f'){ if(document.fullscreenElement)document.exitFullscreen();
+    else document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen(); }
+  if(k===' '){ graine=(graine*7+13)%100000; scene=core.makeScene(cols,rows,graine); reAide(); e.preventDefault(); }
+});
+addEventListener('fullscreenchange', ()=>setTimeout(dim,60));
+
+dim();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
